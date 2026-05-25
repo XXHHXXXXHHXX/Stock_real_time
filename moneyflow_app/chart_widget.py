@@ -197,15 +197,23 @@ class MoneyFlowChart(PlotWidget):
     def set_y_max_limit(self, max_value):
         """设置Y轴最大值限制，None表示自动适应"""
         self._y_max_limit = max_value
+        vb = self.getViewBox()
         if max_value is not None and max_value > 0:
             # 固定Y轴范围，禁用Y轴鼠标交互和自动范围
             self.disableAutoRange(axis='y')
             self.setMouseEnabled(x=True, y=False)
+            self.setAutoVisible(y=False)
+            # ViewBox 硬限制：锁定 Y 轴物理边界，仅 X 轴可自由缩放
+            vb.setLimits(yMin=-max_value, yMax=max_value,
+                         xMin=None, xMax=None)
             self.setYRange(-max_value, max_value, padding=0)
         else:
             # 恢复自动适应
             self.enableAutoRange(axis='y')
             self.setMouseEnabled(x=True, y=True)
+            self.setAutoVisible(y=True)
+            vb.setLimits(yMin=None, yMax=None,
+                         xMin=None, xMax=None)
             self._auto_range()
     
     def set_filter(self, min_inflow=None, max_outflow=None, inflow_top_n=30, outflow_top_n=30, spike_threshold=20):
@@ -368,7 +376,12 @@ class MoneyFlowChart(PlotWidget):
             
             # 应用筛选（动态切换前N名）
             self._apply_filter()
-            
+
+            # 若 Y 轴已锁定，每次重绘后强制重置，防止 ViewBox 在
+            # clear/draw 过程中绕过 disableAutoRange 重新计算范围
+            if self._y_max_limit is not None and self._y_max_limit > 0:
+                self.setYRange(-self._y_max_limit, self._y_max_limit, padding=0)
+
             # 自动调整坐标轴范围（仅在第一次加载或换日时）
             if not self._view_initialized:
                 self._auto_range()
