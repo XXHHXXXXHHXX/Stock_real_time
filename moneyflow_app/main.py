@@ -14,6 +14,7 @@
 使用方法：
     python main.py              # 只使用真实数据（默认）
     python main.py --mock       # 允许在真实数据不可用时使用模拟数据
+    python main.py --proxy      # 启用站大爷代理池（需配置config.py中的账号信息）
 
 作者：AI Assistant
 日期：2026-05-20
@@ -43,6 +44,16 @@ def main():
         sys.argv = [arg for arg in sys.argv if arg != "--mock"]
         print("[Main] 已启用模拟数据模式 (--mock)")
     
+    # 检查是否启用代理模式
+    use_proxy = "--proxy" in sys.argv
+    if use_proxy:
+        sys.argv = [arg for arg in sys.argv if arg != "--proxy"]
+        print("[Main] ================================")
+        print("[Main] 已启用代理池模式 (--proxy)")
+        print("[Main] ================================")
+    else:
+        print("[Main] 未启用代理池（如需代理请加上 --proxy 参数）")
+    
     # 创建应用
     app = QApplication(sys.argv)
     app.setApplicationName("实时板块资金流向监控")
@@ -54,7 +65,7 @@ def main():
     app.setFont(font)
     
     # 创建并显示主窗口
-    window = MainWindow(use_mock=use_mock)
+    window = MainWindow(use_mock=use_mock, use_proxy=use_proxy)
     window.show()
     
     sys.exit(app.exec_())

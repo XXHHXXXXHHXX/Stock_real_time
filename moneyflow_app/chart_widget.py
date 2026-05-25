@@ -139,6 +139,11 @@ class MoneyFlowChart(PlotWidget):
         self._filter_inflow_top_n = 30
         self._filter_outflow_top_n = 30
         
+        # 异常波动监控
+        self._spike_threshold = 20  # 百分比阈值，0表示关闭
+        self._spike_records = []    # 记录列表 [{time, name, change_pct, change_amount}, ...]
+        self._spike_sectors = set() # 当前触发异常的板块代码
+        
         # 初始化图表样式
         self._init_style()
         
@@ -186,14 +191,56 @@ class MoneyFlowChart(PlotWidget):
         
         # 注意：X轴现在是连续的真实时间秒坐标，不再需要固定午休分隔线
         
-    def set_filter(self, min_inflow=None, max_outflow=None, inflow_top_n=30, outflow_top_n=30):
+    def set_filter(self, min_inflow=None, max_outflow=None, inflow_top_n=30, outflow_top_n=30, spike_threshold=20):
         """设置筛选条件"""
         self._filter_min_inflow = min_inflow
         self._filter_max_outflow = max_outflow
         self._filter_inflow_top_n = inflow_top_n
         self._filter_outflow_top_n = outflow_top_n
+        self._spike_threshold = spike_threshold
         self._apply_filter()
         
+    def _detect_spikes(self, time_key):
+        """检测异常波动板块，超过阈值则记录并标记加粗"""
+        if self._spike_threshold <= 0:
+            self._spike_sectors.clear()
+            return
+        
+        threshold = self._spike_threshold
+        self._spike_sectors.clear()
+        
+        for ts_code, info in self._sector_info.items():
+            points = self._history_points.get(ts_code, [])
+            if len(points) < 2:
+                continue
+            
+            # 取当前值和上一次值
+            current_val = points[-1][1]
+            prev_val = points[-2][1]
+            
+            # 避免除0：上次值绝对值小于0.1亿时跳过百分比计算
+            if abs(prev_val) < 0.1:
+                continue
+            
+            change_pct = (current_val - prev_val) / abs(prev_val) * 100
+            
+            if abs(change_pct) >= threshold:
+                self._spike_sectors.add(ts_code)
+                self._spike_records.append({
+                    "time": time_key,
+                    "name": info["name"],
+                    "change_pct": round(change_pct, 2),
+                    "change_amount": round(current_val - prev_val, 2),
+                    "current_amount": round(current_val, 2),
+                })
+                # 只保留最近100条记录，防止内存无限增长
+                if len(self._spike_records) > 100:
+                    self._spike_records = self._spike_records[-100:]
+    
+    def get_spike_records(self, limit=20):
+        """获取最近的异常波动记录"""
+        return self._spike_records[-limit:]
+    
     def _apply_filter(self):
         """应用筛选条件，更新可见板块
         
@@ -259,7 +306,6 @@ class MoneyFlowChart(PlotWidget):
             
             # 更新板块信息并追加历史点
             new_sectors = {}
-            color_idx = 0
             
             for _, row in sectors_df.iterrows():
                 ts_code = row.get("ts_code", "")
@@ -267,8 +313,9 @@ class MoneyFlowChart(PlotWidget):
                 net_amount = float(row.get("net_amount", 0))
                 pct_change = float(row.get("pct_change", 0))
                 
-                line_color = QColor(COLORS["line_colors"][color_idx % len(COLORS["line_colors"])])
-                color_idx += 1
+                # 固定颜色：基于板块代码 hash，不随排名变化
+                color_idx = hash(ts_code) % len(COLORS["line_colors"])
+                line_color = QColor(COLORS["line_colors"][color_idx])
                 
                 new_sectors[ts_code] = {
                     "name": name,
@@ -277,7 +324,7 @@ class MoneyFlowChart(PlotWidget):
                     "color": line_color,
                 }
                 
-                # 追加历史点
+                # 追加历史点（所有板块都记录，即使当前不显示）
                 if ts_code not in self._history_points:
                     self._history_points[ts_code] = []
                 
@@ -293,13 +340,16 @@ class MoneyFlowChart(PlotWidget):
             
             self._sector_info = new_sectors
             
+            # 检测异常波动（在筛选前检测所有板块）
+            self._detect_spikes(time_key)
+            
             # 清除旧绘图
             self._clear_plots()
             
             # 绘制新的曲线
             self._draw_plots()
             
-            # 应用筛选
+            # 应用筛选（动态切换前N名）
             self._apply_filter()
             
             # 自动调整坐标轴范围（仅在第一次加载或换日时）
@@ -349,7 +399,9 @@ class MoneyFlowChart(PlotWidget):
             values = np.array(values, dtype=float)
             
             color = info["color"]
-            pen = mkPen(color=color, width=2)
+            # 异常板块曲线加粗
+            line_width = 4 if ts_code in self._spike_sectors else 2
+            pen = mkPen(color=color, width=line_width)
             
             try:
                 plot_item = self.plot(times, values, pen=pen, clickable=True)
@@ -392,8 +444,10 @@ class MoneyFlowChart(PlotWidget):
                         min_val = min(min_val, min(label_ys))
                         max_val = max(max_val, max(label_ys))
                 
-                y_padding = (max_val - min_val) * 0.1 if max_val != min_val else 50
-                self.setYRange(min_val - y_padding, max_val + y_padding, padding=0.02)
+                # Y轴以0为对称中心，以最大绝对值为基准，确保正负曲线都有足够展开空间
+                max_abs = max(abs(min_val), abs(max_val))
+                y_padding = max_abs * 0.15 if max_abs > 0 else 10
+                self.setYRange(-max_abs - y_padding, max_abs + y_padding, padding=0.02)
                 
                 # X轴范围：根据数据自适应，右侧留出标签空间
                 min_x = min(all_x)

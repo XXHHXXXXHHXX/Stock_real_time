@@ -65,6 +65,15 @@ DEFAULT_FILTERS = {
     "show_negative_only": False,
 }
 
+# 站大爷免费代理API配置（如需使用代理防封，请填写以下信息）
+# 文档: https://www.zdaye.com/doc/api/FreeProxy_get
+USE_ZDAYE_PROXY = True
+ZDAYE_API_URL = "http://www.zdopen.com/FreeProxy/Get/"
+ZDAYE_APP_ID = "202605222157502337"
+ZDAYE_AKEY = "ad92715c99936cd0"
+ZDAYE_PROXY_USERNAME = "202605222157502337"  # 实例ID，作为代理用户名
+ZDAYE_PROXY_PASSWORD = "57502337"             # 实例ID后8位，作为代理密码
+
 # 交易时间段（A股）
 TRADING_HOURS = {
     "morning_start": "09:30",

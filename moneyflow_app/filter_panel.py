@@ -41,40 +41,44 @@ class FilterPanel(QFrame):
             QFrame {{
                 background-color: {COLORS['panel_bg']};
                 border: 1px solid {COLORS['border']};
-                border-radius: 8px;
+                border-radius: 6px;
             }}
             QGroupBox {{
                 color: {COLORS['text']};
                 font-weight: bold;
+                font-size: 12px;
                 border: 1px solid {COLORS['border']};
                 border-radius: 4px;
-                margin-top: 10px;
-                padding-top: 10px;
+                margin-top: 6px;
+                padding-top: 6px;
+                padding-bottom: 4px;
             }}
             QGroupBox::title {{
                 subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px;
+                left: 8px;
+                padding: 0 4px;
             }}
             QLabel {{
                 color: #555555;
-                font-size: 12px;
+                font-size: 11px;
             }}
             QDoubleSpinBox, QSpinBox, QComboBox, QLineEdit {{
                 background-color: {COLORS['input_bg']};
                 color: {COLORS['text']};
                 border: 1px solid {COLORS['border']};
-                border-radius: 4px;
-                padding: 4px;
-                min-height: 22px;
+                border-radius: 3px;
+                padding: 2px 4px;
+                min-height: 18px;
+                font-size: 11px;
             }}
             QPushButton {{
                 background-color: {COLORS['button_bg']};
                 color: {COLORS['text']};
                 border: 1px solid {COLORS['border']};
                 border-radius: 4px;
-                padding: 6px 16px;
+                padding: 4px 10px;
                 font-weight: bold;
+                font-size: 12px;
             }}
             QPushButton:hover {{
                 background-color: {COLORS['button_hover']};
@@ -93,24 +97,24 @@ class FilterPanel(QFrame):
             }}
             QCheckBox {{
                 color: #555555;
-                font-size: 12px;
+                font-size: 11px;
             }}
             QCheckBox::indicator {{
-                width: 16px;
-                height: 16px;
+                width: 14px;
+                height: 14px;
             }}
             QSlider::groove:horizontal {{
                 border: 1px solid {COLORS['border']};
-                height: 6px;
+                height: 5px;
                 background: {COLORS['panel_bg']};
-                border-radius: 3px;
+                border-radius: 2px;
             }}
             QSlider::handle:horizontal {{
                 background: {COLORS['positive']};
                 border: 1px solid #cc0000;
-                width: 14px;
-                margin: -4px 0;
-                border-radius: 7px;
+                width: 12px;
+                margin: -3px 0;
+                border-radius: 6px;
             }}
         """)
         
@@ -119,14 +123,14 @@ class FilterPanel(QFrame):
     def _init_ui(self):
         """初始化UI"""
         layout = QVBoxLayout(self)
-        layout.setSpacing(10)
-        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(6)
+        layout.setContentsMargins(10, 10, 10, 10)
         
         # ===== 标题 =====
         title = QLabel("筛选设置")
         title.setStyleSheet(f"""
             color: {COLORS['text']};
-            font-size: 16px;
+            font-size: 14px;
             font-weight: bold;
             font-family: "Microsoft YaHei";
         """)
@@ -207,6 +211,18 @@ class FilterPanel(QFrame):
         search_layout.addWidget(self._search_edit)
         display_layout.addLayout(search_layout)
         
+        # 异常波动阈值
+        spike_layout = QHBoxLayout()
+        spike_layout.addWidget(QLabel("异动阈值:"))
+        self._spike_threshold_spin = QSpinBox()
+        self._spike_threshold_spin.setRange(0, 100)
+        self._spike_threshold_spin.setValue(20)
+        self._spike_threshold_spin.setSuffix(" %")
+        self._spike_threshold_spin.setToolTip("净流入相对变化超过此百分比时，曲线加粗并记录")
+        self._spike_threshold_spin.valueChanged.connect(self._on_filter_changed)
+        spike_layout.addWidget(self._spike_threshold_spin)
+        display_layout.addLayout(spike_layout)
+        
         layout.addWidget(display_group)
         
         # ===== 自动刷新设置 =====
@@ -223,7 +239,7 @@ class FilterPanel(QFrame):
         interval_layout = QHBoxLayout()
         interval_layout.addWidget(QLabel("刷新间隔:"))
         self._interval_spin = QSpinBox()
-        self._interval_spin.setRange(5, 3600)
+        self._interval_spin.setRange(1, 3600)
         self._interval_spin.setValue(60)
         self._interval_spin.setSuffix(" 秒")
         self._interval_spin.valueChanged.connect(self.interval_changed.emit)
@@ -233,7 +249,8 @@ class FilterPanel(QFrame):
         layout.addWidget(refresh_group)
         
         # ===== 操作按钮 =====
-        btn_layout = QHBoxLayout()
+        btn_layout = QVBoxLayout()
+        btn_layout.setSpacing(6)
         
         self._refresh_btn = QPushButton("立即刷新")
         self._refresh_btn.setObjectName("primary")
@@ -324,6 +341,7 @@ class FilterPanel(QFrame):
             "inflow_only": self._show_inflow_only.isChecked(),
             "outflow_only": self._show_outflow_only.isChecked(),
             "search": self._search_edit.text().strip(),
+            "spike_threshold": self._spike_threshold_spin.value(),
         }
     
     def set_status(self, message):

@@ -12,7 +12,8 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QStatusBar, QLabel, QProgressBar, QSplitter,
     QMessageBox, QApplication, QAction, QMenu, QToolBar,
-    QDialog, QLineEdit, QFormLayout, QDialogButtonBox
+    QDialog, QLineEdit, QFormLayout, QDialogButtonBox,
+    QDockWidget, QTableWidget, QTableWidgetItem, QHeaderView
 )
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, QObject, QSize
 from PyQt5.QtGui import QIcon, QFont, QColor
@@ -145,13 +146,17 @@ class MainWindow(QMainWindow):
     - 底部：状态栏
     """
     
-    def __init__(self, use_mock=False):
+    def __init__(self, use_mock=False, use_proxy=False):
         super().__init__()
         
-        # 窗口设置
+        # 窗口设置：初始大小为屏幕的 1/2，并居中显示
         self.setWindowTitle("实时板块资金流向监控")
-        self.setMinimumSize(1400, 900)
-        self.resize(1600, 1000)
+        self.setMinimumSize(800, 600)
+        screen = QApplication.primaryScreen().availableGeometry()
+        init_w = screen.width() // 2
+        init_h = screen.height() // 2
+        self.resize(init_w, init_h)
+        self.move(screen.width() // 4, screen.height() // 4)
         
         # 数据获取器
         self._fetcher = None
@@ -159,6 +164,7 @@ class MainWindow(QMainWindow):
         self._current_filters = {}
         self._last_data = None
         self._use_mock = use_mock
+        self._use_proxy = use_proxy
         
         # 初始化UI
         self._init_ui()
@@ -224,10 +230,9 @@ class MainWindow(QMainWindow):
         # ===== 主体区域（筛选 + 图表） =====
         body_splitter = QSplitter(Qt.Horizontal)
         
-        # 筛选面板
+        # 筛选面板（最小宽度保证按钮文字能完整显示）
         self._filter_panel = FilterPanel()
-        self._filter_panel.setMinimumWidth(250)
-        self._filter_panel.setMaximumWidth(350)
+        self._filter_panel.setMinimumWidth(260)
         self._filter_panel.filter_changed.connect(self._on_filter_changed)
         self._filter_panel.refresh_requested.connect(self._manual_refresh)
         self._filter_panel.auto_refresh_toggled.connect(self._on_auto_refresh_toggled)
@@ -237,8 +242,8 @@ class MainWindow(QMainWindow):
         # 图表区域
         chart_container = QWidget()
         chart_layout = QVBoxLayout(chart_container)
-        chart_layout.setContentsMargins(10, 10, 10, 10)
-        chart_layout.setSpacing(5)
+        chart_layout.setContentsMargins(8, 8, 8, 8)
+        chart_layout.setSpacing(4)
         
         # 标题
         title_container = QWidget()
@@ -248,7 +253,7 @@ class MainWindow(QMainWindow):
         self._title_label = QLabel("板块资金实时分时流向")
         self._title_label.setStyleSheet(f"""
             color: {COLORS['text']};
-            font-size: 22px;
+            font-size: 16px;
             font-weight: bold;
             font-family: "Microsoft YaHei", "SimHei";
         """)
@@ -268,7 +273,10 @@ class MainWindow(QMainWindow):
         
         body_splitter.addWidget(chart_container)
         body_splitter.setStretchFactor(1, 1)
-        body_splitter.setSizes([280, 1200])
+        # 左侧保证至少能放下筛选面板（260px），右侧占剩余空间
+        left_w = max(260, int(self.width() * 0.25))
+        right_w = max(300, self.width() - left_w)
+        body_splitter.setSizes([left_w, right_w])
         
         main_layout.addWidget(body_splitter, stretch=1)
         
@@ -314,6 +322,38 @@ class MainWindow(QMainWindow):
         self._data_time_label = QLabel("")
         self._data_time_label.setStyleSheet(f"color: {COLORS['neutral']}; font-size: 11px;")
         self._status_bar.addPermanentWidget(self._data_time_label)
+        
+        # ===== 异动记录浮动面板（DockWidget） =====
+        self._spike_dock = QDockWidget("异动记录", self)
+        self._spike_dock.setFeatures(
+            QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetClosable
+        )
+        self._spike_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        
+        self._spike_table = QTableWidget()
+        self._spike_table.setColumnCount(5)
+        self._spike_table.setHorizontalHeaderLabels(["时间", "板块", "变化%", "变化(亿)", "当前(亿)"])
+        self._spike_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self._spike_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self._spike_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self._spike_table.setAlternatingRowColors(True)
+        self._spike_table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {COLORS['panel_bg']};
+                color: {COLORS['text']};
+                font-size: 12px;
+                border: none;
+            }}
+            QHeaderView::section {{
+                background-color: {COLORS['toolbar_bg']};
+                color: {COLORS['text']};
+                font-weight: bold;
+                padding: 4px;
+                border: 1px solid {COLORS['border']};
+            }}
+        """)
+        self._spike_dock.setWidget(self._spike_table)
+        self.addDockWidget(Qt.RightDockWidgetArea, self._spike_dock)
     
     def _apply_style(self):
         """应用全局样式"""
@@ -356,7 +396,7 @@ class MainWindow(QMainWindow):
         """初始化数据"""
         try:
             # 初始化数据获取器
-            self._fetcher = DataFetcher(use_mock=self._use_mock)
+            self._fetcher = DataFetcher(use_mock=self._use_mock, use_proxy=self._use_proxy)
             
             if not self._fetcher.is_initialized():
                 self._filter_panel.set_status(
@@ -426,15 +466,46 @@ class MainWindow(QMainWindow):
                 
                 visible_count = len(self._chart._visible_sectors) if hasattr(self._chart, '_visible_sectors') else 0
                 self._status_label.setText(
-                    f"共 {len(sectors_df)} 个板块 | "
-                    f"显示 {visible_count} 条曲线"
+                    f"共 {len(sectors_df)} 个板块 | 显示 {visible_count} 条曲线"
                 )
+                
+                # 更新异动记录表格
+                self._update_spike_table()
             else:
                 self._status_label.setText("暂无数据")
                 
         except Exception as e:
             print(f"[MainWindow] 处理数据失败: {e}")
             traceback.print_exc()
+    
+    def _update_spike_table(self):
+        """更新异动记录表格"""
+        try:
+            records = self._chart.get_spike_records(limit=200)
+            self._spike_table.setRowCount(len(records))
+            for i, rec in enumerate(records):
+                self._spike_table.setItem(i, 0, QTableWidgetItem(str(rec.get("time", ""))))
+                self._spike_table.setItem(i, 1, QTableWidgetItem(str(rec.get("name", ""))))
+                pct = rec.get("change_pct", 0)
+                self._spike_table.setItem(i, 2, QTableWidgetItem(f"{pct:+.1f}%"))
+                amt = rec.get("change_amount", 0)
+                self._spike_table.setItem(i, 3, QTableWidgetItem(f"{amt:+.2f}"))
+                cur = rec.get("current_amount", 0)
+                self._spike_table.setItem(i, 4, QTableWidgetItem(f"{cur:.2f}"))
+                
+                # 根据正负设置文字颜色
+                for col in range(5):
+                    item = self._spike_table.item(i, col)
+                    if item:
+                        if pct > 0:
+                            item.setForeground(QColor(COLORS["positive"]))
+                        elif pct < 0:
+                            item.setForeground(QColor(COLORS["negative"]))
+            # 滚动到最新记录
+            if records:
+                self._spike_table.scrollToBottom()
+        except Exception as e:
+            print(f"[MainWindow] 更新异动表格失败: {e}")
     
     def _on_index_ready(self, index_data):
         """指数数据准备好回调"""
@@ -473,7 +544,16 @@ class MainWindow(QMainWindow):
     
     def _on_interval_changed(self, seconds):
         """刷新间隔变化"""
+        # 非 mock 模式下，最低间隔强制为 30 秒（避免真实请求过频被封）
+        if not self._use_mock and seconds < 30:
+            seconds = 30
+            self._filter_panel._interval_spin.setValue(30)
+            print(f"[MainWindow] 非模拟模式下刷新间隔不能低于 30 秒，已强制调整为 30")
         self._update_timer.setInterval(seconds * 1000)
+        # 同步调整概念板块缓存时间，略小于刷新间隔，避免缓存导致刷新不生效
+        if self._fetcher is not None:
+            ttl = max(1, seconds - 2)
+            self._fetcher._concept_cache_ttl = ttl
     
     def _on_filter_changed(self, filters):
         """筛选条件变化"""
@@ -507,11 +587,13 @@ class MainWindow(QMainWindow):
                 inflow_top_n = 0
             
             # 应用到图表
+            spike_threshold = filters.get("spike_threshold", 20)
             self._chart.set_filter(
                 min_inflow=min_inflow,
                 max_outflow=max_outflow,
                 inflow_top_n=inflow_top_n,
-                outflow_top_n=outflow_top_n
+                outflow_top_n=outflow_top_n,
+                spike_threshold=spike_threshold
             )
             
             # 搜索过滤
@@ -541,7 +623,7 @@ class MainWindow(QMainWindow):
             new_token = dialog.get_token()
             if new_token:
                 # 重新初始化数据获取器
-                self._fetcher = DataFetcher(token=new_token, use_mock=self._use_mock)
+                self._fetcher = DataFetcher(token=new_token, use_mock=self._use_mock, use_proxy=self._use_proxy)
                 if self._fetcher.is_initialized():
                     self._show_info("Token已更新，正在重新获取数据...")
                     self._init_data()
