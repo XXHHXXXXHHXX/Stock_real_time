@@ -118,6 +118,7 @@ class MoneyFlowChart(PlotWidget):
         # 绘图项
         self._plot_items = {}       # {ts_code: PlotDataItem}
         self._label_items = {}      # {ts_code: TextItem}
+        self._label_data_positions = {}  # {ts_code: (data_x, data_y)} 用于缩放时重定位
         
         # 鼠标悬停 tooltip
         self._tooltip = TextItem(text="", color=QColor("#333333"), anchor=(0, 1))
@@ -191,7 +192,10 @@ class MoneyFlowChart(PlotWidget):
         
         # 添加 tooltip 到场景
         self.addItem(self._tooltip)
-        
+
+        # 视图范围变化时更新标签位置，使其始终紧贴曲线末端
+        self.getViewBox().sigRangeChanged.connect(self._on_view_range_changed)
+
         # 注意：X轴现在是连续的真实时间秒坐标，不再需要固定午休分隔线
         
     def set_y_max_limit(self, max_value):
@@ -561,6 +565,12 @@ class MoneyFlowChart(PlotWidget):
             placed.append((final_y, min_gap))
             data["final_y"] = final_y
         
+        # 计算当前视图下像素到数据坐标的缩放比
+        vb = self.getViewBox()
+        x_range = vb.viewRange()[0]
+        x_span = x_range[1] - x_range[0] if x_range[1] != x_range[0] else 1
+        pixels_per_data = self.width() / x_span if x_span > 0 else 1
+
         # 绘制标签
         for data in label_data:
             ts_code = data["ts_code"]
@@ -569,10 +579,10 @@ class MoneyFlowChart(PlotWidget):
             name = data["name"]
             net = data["net"]
             pct = data["pct"]
-            
+
             # 截断名称（最多5个字）
             display_name = name if len(name) <= 5 else name[:4] + "…"
-            
+
             # 净流入颜色：红涨绿跌（A股习惯）
             if net > 0:
                 net_color = COLORS["positive"]
@@ -583,19 +593,40 @@ class MoneyFlowChart(PlotWidget):
             else:
                 net_color = COLORS["neutral"]
                 sign = ""
-            
+
             text = f"{display_name} {sign}{net:.1f}亿"
-            
+
             label = TextItem(text=text, color=QColor(net_color), anchor=(0, 0.5))
             label.setFont(QFont("Microsoft YaHei", font_size))
-            
-            # 位置：曲线末端右侧
-            label_x = x + 8
+
+            # 位置：固定像素偏移（12px），不随 X 轴缩放变化
+            pixel_offset = 12
+            data_offset = pixel_offset / pixels_per_data if pixels_per_data > 0 else 8
+            label_x = x + data_offset
             label.setPos(label_x, y)
-            
+
             self.addItem(label)
             self._label_items[ts_code] = label
-    
+            self._label_data_positions[ts_code] = (x, y)
+
+    def _on_view_range_changed(self, vb, ranges):
+        """视图范围变化时，更新标签X位置使其始终紧贴曲线末端"""
+        if not self._label_items or not self._label_data_positions:
+            return
+        try:
+            x_range = vb.viewRange()[0]
+            x_span = x_range[1] - x_range[0] if x_range[1] != x_range[0] else 1
+            pixels_per_data = self.width() / x_span if x_span > 0 else 1
+            pixel_offset = 12
+            data_offset = pixel_offset / pixels_per_data if pixels_per_data > 0 else 8
+
+            for ts_code, label in self._label_items.items():
+                if ts_code in self._label_data_positions:
+                    data_x, data_y = self._label_data_positions[ts_code]
+                    label.setPos(data_x + data_offset, data_y)
+        except Exception:
+            pass
+
     def _on_mouse_moved(self, pos):
         """鼠标移动时显示悬停提示"""
         try:

@@ -63,6 +63,7 @@ class DataFetcher:
         self._cache = {}
         self._cache_time = {}
         self._concept_cache_ttl = 55  # 概念板块缓存秒数，可由外部调整
+        self._fetch_time_window = 30  # 分页请求总时间窗口（秒），可由外部调整
         self.session = requests.Session()
         self._proxy_fetcher = None
         print(f"[DataFetcher] use_proxy={use_proxy}, USE_ZDAYE_PROXY={USE_ZDAYE_PROXY}")
@@ -277,31 +278,38 @@ class DataFetcher:
         if cached is not None:
             return cached
 
+        # Tushare 指数接口暂时关闭，连接持续失败导致 UI 卡顿
+        # 非模拟模式下也直接返回空 dict，指数栏显示 "--"
+        if not self._use_mock:
+            print("[DataFetcher] 指数数据已暂时关闭（Tushare接口不稳定）")
+            return {}
+
         if self.pro is None:
             if self._use_mock:
                 result = self._get_mock_index_data()
             self._set_cache(cache_key, result)
             return result
 
-        for name, code in INDEX_CODES.items():
-            try:
-                df = self.pro.index_daily(ts_code=code)
-                if df is not None and len(df) > 0:
-                    df = df.sort_values("trade_date", ascending=False)
-                    row = df.iloc[0]
-                    result[name] = {
-                        "code": code,
-                        "name": name,
-                        "close": float(row.get("close", 0)),
-                        "open": float(row.get("open", 0)),
-                        "pre_close": float(row.get("pre_close", row.get("close", 0))),
-                        "change": float(row.get("change", 0)),
-                        "pct_change": float(row.get("pct_chg", 0)),
-                        "vol": float(row.get("vol", 0)),
-                        "amount": float(row.get("amount", 0)),
-                    }
-            except Exception as e:
-                print(f"[DataFetcher] 获取指数{name}数据失败: {e}")
+        # ---- 以下 Tushare 指数获取逻辑已禁用 ----
+        # for name, code in INDEX_CODES.items():
+        #     try:
+        #         df = self.pro.index_daily(ts_code=code)
+        #         if df is not None and len(df) > 0:
+        #             df = df.sort_values("trade_date", ascending=False)
+        #             row = df.iloc[0]
+        #             result[name] = {
+        #                 "code": code,
+        #                 "name": name,
+        #                 "close": float(row.get("close", 0)),
+        #                 "open": float(row.get("open", 0)),
+        #                 "pre_close": float(row.get("pre_close", row.get("close", 0))),
+        #                 "change": float(row.get("change", 0)),
+        #                 "pct_change": float(row.get("pct_chg", 0)),
+        #                 "vol": float(row.get("vol", 0)),
+        #                 "amount": float(row.get("amount", 0)),
+        #             }
+        #     except Exception as e:
+        #         print(f"[DataFetcher] 获取指数{name}数据失败: {e}")
 
         if not result and self._use_mock:
             result = self._get_mock_index_data()
@@ -508,21 +516,21 @@ class DataFetcher:
             all_records.extend(self._parse_concept_records(diff))
             print(f"[DataFetcher] 东方财富概念板块总数: {total}, 已获取第1页({len(diff)}条)")
 
-            # 2. 计算剩余页数，打乱顺序，在30秒内随机间隔串行获取
+            # 2. 计算剩余页数，打乱顺序，在配置的时间窗口内随机间隔串行获取
             total_pages = (total + page_size - 1) // page_size if total > 0 else 1
             remaining_pages = list(range(2, total_pages + 1))
             random.shuffle(remaining_pages)  # 随机顺序，不按1,2,3...翻页
 
             n = len(remaining_pages)
             if n > 0:
-                # 生成随机间隔：每个至少0.5秒，总和不超过30秒
+                # 生成随机间隔：每个至少0.5秒，总和不超过配置的时间窗口
                 min_interval = 0.5
-                remaining_time = max(0, 30 - min_interval * n)
+                remaining_time = max(0, self._fetch_time_window - min_interval * n)
                 raw = [random.random() for _ in range(n)]
                 total_raw = sum(raw)
                 extra = [r / total_raw * remaining_time for r in raw] if total_raw > 0 else [0] * n
                 intervals = [min_interval + e for e in extra]
-                print(f"[DataFetcher] 剩余 {n} 页将在30秒内随机串行获取，"
+                print(f"[DataFetcher] 剩余 {n} 页将在{self._fetch_time_window}秒内随机串行获取，"
                       f"间隔: {[round(x,1) for x in intervals]}，顺序: {remaining_pages}")
 
                 for page_no, interval in zip(remaining_pages, intervals):

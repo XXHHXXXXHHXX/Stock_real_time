@@ -584,16 +584,17 @@ class MainWindow(QMainWindow):
     
     def _on_interval_changed(self, seconds):
         """刷新间隔变化"""
-        # 非 mock 模式下，最低间隔强制为 30 秒（避免真实请求过频被封）
-        if not self._use_mock and seconds < 30:
-            seconds = 30
-            self._filter_panel._interval_spin.setValue(30)
-            print(f"[MainWindow] 非模拟模式下刷新间隔不能低于 30 秒，已强制调整为 30")
+        # 非 mock 模式下，最低间隔强制为 5 秒（避免真实请求过频被封）
+        if not self._use_mock and seconds < 5:
+            seconds = 5
+            self._filter_panel._interval_spin.setValue(5)
+            print(f"[MainWindow] 非模拟模式下刷新间隔不能低于 5 秒，已强制调整为 5")
         self._update_timer.setInterval(seconds * 1000)
         # 同步调整概念板块缓存时间，略小于刷新间隔，避免缓存导致刷新不生效
         if self._fetcher is not None:
             ttl = max(1, seconds - 2)
             self._fetcher._concept_cache_ttl = ttl
+            self._fetcher._fetch_time_window = seconds
     
     def _on_y_max_changed(self, value):
         """Y轴最大值变化"""
