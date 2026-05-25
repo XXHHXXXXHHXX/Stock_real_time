@@ -588,12 +588,12 @@ class MoneyFlowChart(PlotWidget):
         try:
             view_pos = self.plotItem.vb.mapSceneToView(pos)
             mx, my = view_pos.x(), view_pos.y()
-            
+
             closest_ts = None
             closest_dist = float('inf')
             closest_x = None
             closest_y = None
-            
+
             for ts_code in self._visible_sectors:
                 plot_item = self._plot_items.get(ts_code)
                 if plot_item is None:
@@ -601,36 +601,36 @@ class MoneyFlowChart(PlotWidget):
                 data = plot_item.getData()
                 if data is None or len(data[0]) == 0:
                     continue
-                
+
                 x_data, y_data = data
                 # 计算到最近数据点的距离
                 distances = np.sqrt((x_data - mx)**2 + (y_data - my)**2)
                 idx = np.argmin(distances)
                 dist = distances[idx]
-                
+
                 if dist < closest_dist:
                     closest_dist = dist
                     closest_ts = ts_code
                     closest_x = x_data[idx]
                     closest_y = y_data[idx]
-            
+
             # 阈值：只有足够近才显示 tooltip
             if closest_ts and closest_dist < 25:
                 info = self._sector_info.get(closest_ts, {})
                 name = info.get("name", "")
                 net = info.get("net_amount", 0)
                 pct = info.get("pct_change", 0)
-                
+
                 if net > 0:
                     sign = "+"
                 elif net < 0:
                     sign = ""
                 else:
                     sign = ""
-                
+
                 tooltip_text = f"{name}\n净流入: {sign}{net:.2f}亿\n涨跌幅: {sign}{pct:.2f}%"
                 self._tooltip.setText(tooltip_text)
-                
+
                 # tooltip 放在点上方
                 self._tooltip.setPos(closest_x, closest_y)
                 self._tooltip.show()
@@ -638,10 +638,75 @@ class MoneyFlowChart(PlotWidget):
             else:
                 self._tooltip.hide()
                 self._tooltip_target = None
-                
+
         except Exception as e:
             # 鼠标移动事件不应抛出异常
             pass
+
+    def mousePressEvent(self, event):
+        """鼠标点击事件 - 检测是否点击了板块标签或曲线"""
+        try:
+            pos = event.pos()
+            vb = self.plotItem.vb
+
+            # 计算像素到数据坐标的缩放因子
+            x_range, y_range = vb.viewRange()
+            x_span = x_range[1] - x_range[0] if x_range[1] != x_range[0] else 1
+            y_span = y_range[1] - y_range[0] if y_range[1] != y_range[0] else 1
+            x_scale = self.width() / x_span if x_span > 0 else 1
+            y_scale = self.height() / y_span if y_span > 0 else 1
+
+            view_pos = vb.mapSceneToView(pos)
+            mx, my = view_pos.x(), view_pos.y()
+
+            # 检查标签点击（标签宽约110px，高约18px）
+            label_w_data = 110 / x_scale if x_scale > 0 else 20
+            label_h_data = 18 / y_scale if y_scale > 0 else 4
+
+            for ts_code, label in self._label_items.items():
+                if ts_code not in self._visible_sectors:
+                    continue
+                label_pos = label.pos()
+                lx, ly = label_pos.x(), label_pos.y()
+                if (abs(mx - lx) < label_w_data / 2 and
+                        abs(my - ly) < label_h_data):
+                    info = self._sector_info.get(ts_code, {})
+                    name = info.get("name", "")
+                    print(f"[Chart] 点击板块标签: {name} ({ts_code})")
+                    self.signals.sector_clicked.emit(ts_code, name)
+                    event.accept()
+                    return
+
+            # 检查曲线点击
+            closest_ts = None
+            closest_dist = float('inf')
+            for ts_code in self._visible_sectors:
+                plot_item = self._plot_items.get(ts_code)
+                if plot_item is None:
+                    continue
+                data = plot_item.getData()
+                if data is None or len(data[0]) == 0:
+                    continue
+                x_data, y_data = data
+                distances = np.sqrt((x_data - mx)**2 + (y_data - my)**2)
+                idx = np.argmin(distances)
+                dist = distances[idx]
+                if dist < closest_dist:
+                    closest_dist = dist
+                    closest_ts = ts_code
+
+            if closest_ts and closest_dist < 20:
+                info = self._sector_info.get(closest_ts, {})
+                name = info.get("name", "")
+                print(f"[Chart] 点击板块曲线: {name} ({closest_ts})")
+                self.signals.sector_clicked.emit(closest_ts, name)
+                event.accept()
+                return
+
+        except Exception:
+            pass
+
+        super().mousePressEvent(event)
     
     def refresh_plot(self):
         """刷新图表"""

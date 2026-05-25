@@ -616,6 +616,90 @@ class DataFetcher:
                 return result
             return result
 
+    def get_concept_detail(self, concept_code):
+        """
+        获取指定概念板块的个股明细
+
+        Parameters:
+        -----------
+        concept_code : str
+            概念板块代码，如 'BK0559'
+
+        返回: DataFrame [code, name, price, change_pct, net_inflow, ...]
+        """
+        cache_key = f"concept_detail_{concept_code}"
+        cached = self._get_cache(cache_key, max_age_seconds=self._concept_cache_ttl)
+        if cached is not None:
+            return cached
+
+        url = (
+            "https://push2delay.eastmoney.com/api/qt/clist/get?"
+            "cb=jQuery112309520971118134538_1656316025491&"
+            "fid=f62&po=1&pz=500&pn=1&np=1&fltt=2&invt=2&"
+            "ut=b2884a393a59ad64002292a3e90d46a5&"
+            f"fs=b:{concept_code}&"
+            "fields=f12,f14,f2,f3,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87,f102,f204,f205,f124,f1,f13"
+            f"&_={int(time.time() * 1000)}"
+        )
+
+        try:
+            data = self._request_page(url)
+            diff = data.get('data', {}).get('diff', [])
+            if not diff:
+                print(f"[DataFetcher] 概念 {concept_code} 无个股数据")
+                return pd.DataFrame()
+
+            records = []
+            for item in diff:
+                code = item.get('f12', '')
+                name = item.get('f14', '')
+                price = item.get('f2')
+                change_pct = item.get('f3')
+                net_inflow = item.get('f62')  # 主力净流入（元）
+                net_flow_5day = item.get('f184')  # 5日净流入
+                super_large_inflow = item.get('f66')  # 超大单净流入
+                large_inflow = item.get('f69')  # 大单净流入
+                mid_inflow = item.get('f72')  # 中单净流入
+                small_inflow = item.get('f75')  # 小单净流入
+                super_large_ratio = item.get('f78')  # 超大单占比
+                large_ratio = item.get('f81')  # 大单占比
+                mid_ratio = item.get('f84')  # 中单占比
+                small_ratio = item.get('f87')  # 小单占比
+                area = item.get('f102', '')
+
+                def safe_float(v, div=1):
+                    try:
+                        return float(v) / div if v is not None else 0.0
+                    except (ValueError, TypeError):
+                        return 0.0
+
+                records.append({
+                    'code': str(code).zfill(6),
+                    'name': str(name),
+                    'price': safe_float(price),
+                    'change_pct': safe_float(change_pct),
+                    'net_inflow': round(safe_float(net_inflow, 1e8), 2),  # 转为亿元
+                    'net_flow_5day': round(safe_float(net_flow_5day, 1e8), 2),
+                    'super_large_inflow': round(safe_float(super_large_inflow, 1e8), 2),
+                    'large_inflow': round(safe_float(large_inflow, 1e8), 2),
+                    'mid_inflow': round(safe_float(mid_inflow, 1e8), 2),
+                    'small_inflow': round(safe_float(small_inflow, 1e8), 2),
+                    'super_large_ratio': safe_float(super_large_ratio),
+                    'large_ratio': safe_float(large_ratio),
+                    'mid_ratio': safe_float(mid_ratio),
+                    'small_ratio': safe_float(small_ratio),
+                    'area': str(area),
+                })
+
+            df = pd.DataFrame(records)
+            df = df.sort_values('net_inflow', ascending=False).reset_index(drop=True)
+            self._set_cache(cache_key, df)
+            return df
+
+        except Exception as e:
+            print(f"[DataFetcher] 获取概念 {concept_code} 个股明细失败: {e}")
+            return pd.DataFrame()
+
     def get_intraday_timeseries(self, ts_code, freq="5MIN"):
         """
         获取板块的日内分时数据序列

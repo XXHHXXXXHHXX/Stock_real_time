@@ -22,6 +22,7 @@ from config import COLORS, INDEX_CODES, UPDATE_INTERVAL_MS
 from data_fetcher import DataFetcher
 from chart_widget import MoneyFlowChart, IndexBar
 from filter_panel import FilterPanel
+from sector_detail_panel import SectorDetailPanel
 
 
 class DataUpdateSignals(QObject):
@@ -34,45 +35,69 @@ class DataUpdateSignals(QObject):
 
 class DataUpdateWorker(QThread):
     """数据更新工作线程 - 在后台获取数据避免UI卡顿"""
-    
+
     def __init__(self, fetcher):
         super().__init__()
         self.fetcher = fetcher
         self.signals = DataUpdateSignals()
         self._running = True
-    
+
     def run(self):
         """执行数据获取"""
         try:
             self.signals.progress.emit(0, "正在获取数据...")
-            
+
             # 获取指数数据
             index_data = self.fetcher.get_index_realtime()
             if index_data:
                 self.signals.index_ready.emit(index_data)
-            
+
             self.signals.progress.emit(30, "正在获取概念板块资金流向...")
-            
+
             # 获取板块资金流向数据
             result = self.fetcher.calculate_realtime_moneyflow(
                 progress_callback=lambda p, m: self.signals.progress.emit(30 + int(p * 0.7), m)
             )
-            
+
             if result and result.get("sectors") is not None and len(result.get("sectors", [])) > 0:
                 self.signals.data_ready.emit(result)
                 self.signals.progress.emit(100, "数据更新完成")
             else:
                 self.signals.error.emit("获取数据失败，请检查网络连接")
-                
+
         except Exception as e:
             print(f"[Worker] 数据获取失败: {e}")
             traceback.print_exc()
             self.signals.error.emit(str(e))
-    
+
     def stop(self):
         """停止线程"""
         self._running = False
         self.wait(1000)
+
+
+class SectorDetailSignals(QObject):
+    """板块个股明细信号"""
+    detail_ready = pyqtSignal(object, str, str)  # df, concept_code, concept_name
+
+
+class SectorDetailWorker(QThread):
+    """板块个股明细获取工作线程"""
+
+    def __init__(self, fetcher, concept_code, concept_name):
+        super().__init__()
+        self.fetcher = fetcher
+        self.concept_code = concept_code
+        self.concept_name = concept_name
+        self.signals = SectorDetailSignals()
+
+    def run(self):
+        try:
+            df = self.fetcher.get_concept_detail(self.concept_code)
+            self.signals.detail_ready.emit(df, self.concept_code, self.concept_name)
+        except Exception as e:
+            print(f"[SectorDetailWorker] 获取个股明细失败: {e}")
+            self.signals.detail_ready.emit(None, self.concept_code, self.concept_name)
 
 
 class SettingsDialog(QDialog):
@@ -270,6 +295,7 @@ class MainWindow(QMainWindow):
         
         # 图表
         self._chart = MoneyFlowChart()
+        self._chart.signals.sector_clicked.connect(self._on_sector_clicked)
         chart_layout.addWidget(self._chart)
         
         body_splitter.addWidget(chart_container)
@@ -355,6 +381,19 @@ class MainWindow(QMainWindow):
         """)
         self._spike_dock.setWidget(self._spike_table)
         self.addDockWidget(Qt.RightDockWidgetArea, self._spike_dock)
+
+        # ===== 板块个股明细面板（DockWidget） =====
+        self._sector_detail_panel = SectorDetailPanel()
+        self._sector_detail_panel.close_requested.connect(self._hide_sector_detail)
+
+        self._sector_detail_dock = QDockWidget("板块个股明细", self)
+        self._sector_detail_dock.setFeatures(
+            QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetClosable
+        )
+        self._sector_detail_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self._sector_detail_dock.setWidget(self._sector_detail_panel)
+        self.addDockWidget(Qt.RightDockWidgetArea, self._sector_detail_dock)
+        self._sector_detail_dock.hide()  # 默认隐藏，点击板块后才显示
     
     def _apply_style(self):
         """应用全局样式"""
@@ -646,6 +685,35 @@ class MainWindow(QMainWindow):
         """显示信息"""
         self._status_label.setText(message)
     
+    def _on_sector_clicked(self, ts_code, name):
+        """板块点击回调 - 获取个股明细并显示"""
+        if self._fetcher is None:
+            return
+
+        print(f"[MainWindow] 板块被点击: {name} ({ts_code})")
+
+        # 更新 dock 标题
+        self._sector_detail_dock.setWindowTitle(f"板块个股明细 - {name}")
+
+        # 显示加载状态
+        self._sector_detail_panel._title_label.setText(f"{name} ({ts_code}) 个股明细")
+        self._sector_detail_panel._summary_label.setText("正在加载...")
+        self._sector_detail_dock.show()
+        self._sector_detail_dock.raise_()
+
+        # 在后台线程获取数据
+        self._detail_worker = SectorDetailWorker(self._fetcher, ts_code, name)
+        self._detail_worker.signals.detail_ready.connect(self._on_sector_detail_ready)
+        self._detail_worker.start()
+
+    def _on_sector_detail_ready(self, df, code, sector_name):
+        """板块个股明细数据就绪"""
+        self._sector_detail_panel.set_data(code, sector_name, df)
+
+    def _hide_sector_detail(self):
+        """隐藏板块个股明细面板"""
+        self._sector_detail_dock.hide()
+
     def closeEvent(self, event):
         """关闭事件"""
         # 停止定时器
