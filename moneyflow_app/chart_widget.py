@@ -144,6 +144,9 @@ class MoneyFlowChart(PlotWidget):
         self._spike_records = []    # 记录列表 [{time, name, change_pct, change_amount}, ...]
         self._spike_sectors = set() # 当前触发异常的板块代码
         
+        # Y轴最大值限制（亿元），None表示自动适应
+        self._y_max_limit = None
+        
         # 初始化图表样式
         self._init_style()
         
@@ -169,7 +172,7 @@ class MoneyFlowChart(PlotWidget):
         self.setLabel("left", "净流入 (亿元)", color="#666666", size="10px")
         self.setLabel("bottom", "时间", color="#666666", size="10px")
         
-        # 鼠标交互
+        # 鼠标交互：X轴可缩放/平移，Y轴根据是否固定范围决定
         self.setMouseEnabled(x=True, y=True)
         self.enableAutoRange(axis="y")
         self.setAutoVisible(y=True)
@@ -191,6 +194,20 @@ class MoneyFlowChart(PlotWidget):
         
         # 注意：X轴现在是连续的真实时间秒坐标，不再需要固定午休分隔线
         
+    def set_y_max_limit(self, max_value):
+        """设置Y轴最大值限制，None表示自动适应"""
+        self._y_max_limit = max_value
+        if max_value is not None and max_value > 0:
+            # 固定Y轴范围，禁用Y轴鼠标交互和自动范围
+            self.disableAutoRange(axis='y')
+            self.setMouseEnabled(x=True, y=False)
+            self.setYRange(-max_value, max_value, padding=0)
+        else:
+            # 恢复自动适应
+            self.enableAutoRange(axis='y')
+            self.setMouseEnabled(x=True, y=True)
+            self._auto_range()
+    
     def set_filter(self, min_inflow=None, max_outflow=None, inflow_top_n=30, outflow_top_n=30, spike_threshold=20):
         """设置筛选条件"""
         self._filter_min_inflow = min_inflow
@@ -432,22 +449,26 @@ class MoneyFlowChart(PlotWidget):
                 except Exception:
                     continue
         
-        if all_values and all_x:
+        if all_x:
             try:
-                min_val = min(all_values)
-                max_val = max(all_values)
-                
-                # 考虑标签的垂直范围
-                if self._label_items:
-                    label_ys = [label.pos().y() for label in self._label_items.values()]
-                    if label_ys:
-                        min_val = min(min_val, min(label_ys))
-                        max_val = max(max_val, max(label_ys))
-                
-                # Y轴以0为对称中心，以最大绝对值为基准，确保正负曲线都有足够展开空间
-                max_abs = max(abs(min_val), abs(max_val))
-                y_padding = max_abs * 0.15 if max_abs > 0 else 10
-                self.setYRange(-max_abs - y_padding, max_abs + y_padding, padding=0.02)
+                # 如果设置了Y轴固定范围，直接使用固定值
+                if self._y_max_limit is not None and self._y_max_limit > 0:
+                    self.setYRange(-self._y_max_limit, self._y_max_limit, padding=0)
+                elif all_values:
+                    min_val = min(all_values)
+                    max_val = max(all_values)
+                    
+                    # 考虑标签的垂直范围
+                    if self._label_items:
+                        label_ys = [label.pos().y() for label in self._label_items.values()]
+                        if label_ys:
+                            min_val = min(min_val, min(label_ys))
+                            max_val = max(max_val, max(label_ys))
+                    
+                    # Y轴以0为对称中心，以最大绝对值为基准，确保正负曲线都有足够展开空间
+                    max_abs = max(abs(min_val), abs(max_val))
+                    y_padding = max_abs * 0.15 if max_abs > 0 else 10
+                    self.setYRange(-max_abs - y_padding, max_abs + y_padding, padding=0.02)
                 
                 # X轴范围：根据数据自适应，右侧留出标签空间
                 min_x = min(all_x)

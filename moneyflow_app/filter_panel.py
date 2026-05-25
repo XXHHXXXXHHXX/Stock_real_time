@@ -33,6 +33,7 @@ class FilterPanel(QFrame):
     refresh_requested = pyqtSignal()
     auto_refresh_toggled = pyqtSignal(bool)
     interval_changed = pyqtSignal(int)
+    y_max_changed = pyqtSignal(float)  # Y轴最大值变化，0表示自动
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -223,6 +224,20 @@ class FilterPanel(QFrame):
         spike_layout.addWidget(self._spike_threshold_spin)
         display_layout.addLayout(spike_layout)
         
+        # Y轴最大值
+        y_max_layout = QHBoxLayout()
+        y_max_layout.addWidget(QLabel("Y轴最大:"))
+        self._y_max_spin = QDoubleSpinBox()
+        self._y_max_spin.setRange(0, 5000)
+        self._y_max_spin.setDecimals(0)
+        self._y_max_spin.setValue(0)
+        self._y_max_spin.setSuffix(" 亿")
+        self._y_max_spin.setSpecialValueText("自动")
+        self._y_max_spin.setToolTip("设置Y轴固定最大值，0表示自动适应")
+        self._y_max_spin.valueChanged.connect(self._on_y_max_changed)
+        y_max_layout.addWidget(self._y_max_spin)
+        display_layout.addLayout(y_max_layout)
+        
         layout.addWidget(display_group)
         
         # ===== 自动刷新设置 =====
@@ -296,6 +311,10 @@ class FilterPanel(QFrame):
                 self._inflow_top_n_spin.setValue(30)
         self._on_filter_changed()
     
+    def _on_y_max_changed(self, value):
+        """Y轴最大值变化"""
+        self.y_max_changed.emit(value)
+    
     def _on_auto_refresh_toggled(self, state):
         """自动刷新开关"""
         self.auto_refresh_toggled.emit(state == Qt.Checked)
@@ -313,6 +332,7 @@ class FilterPanel(QFrame):
         self._show_inflow_only.setChecked(False)
         self._show_outflow_only.setChecked(False)
         self._search_edit.clear()
+        self._y_max_spin.setValue(0)
         self._on_filter_changed()
     
     def get_filters(self):

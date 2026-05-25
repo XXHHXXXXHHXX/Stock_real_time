@@ -237,6 +237,7 @@ class MainWindow(QMainWindow):
         self._filter_panel.refresh_requested.connect(self._manual_refresh)
         self._filter_panel.auto_refresh_toggled.connect(self._on_auto_refresh_toggled)
         self._filter_panel.interval_changed.connect(self._on_interval_changed)
+        self._filter_panel.y_max_changed.connect(self._on_y_max_changed)
         body_splitter.addWidget(self._filter_panel)
         
         # 图表区域
@@ -554,6 +555,13 @@ class MainWindow(QMainWindow):
         if self._fetcher is not None:
             ttl = max(1, seconds - 2)
             self._fetcher._concept_cache_ttl = ttl
+    
+    def _on_y_max_changed(self, value):
+        """Y轴最大值变化"""
+        if value > 0:
+            self._chart.set_y_max_limit(value)
+        else:
+            self._chart.set_y_max_limit(None)
     
     def _on_filter_changed(self, filters):
         """筛选条件变化"""
