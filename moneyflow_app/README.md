@@ -20,6 +20,7 @@ A股板块（概念/行业）实时资金流向分时监控工具，基于 PyQt5
 cd moneyflow_app
 
 # 2. 安装依赖
+python -m pip install --upgrade pip wheel setuptools
 pip install -r requirements.txt
 
 # 3. 运行

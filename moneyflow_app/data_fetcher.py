@@ -334,7 +334,7 @@ class DataFetcher:
     def _build_concept_url(self, page_no=1, page_size=100):
         """构造东方财富概念板块请求URL"""
         return (
-            "http://94.push2.eastmoney.com/api/qt/clist/get?"
+            "http://94.push2delay.eastmoney.com/api/qt/clist/get?"
             "cb=jQuery112404219515748621301_1656315378776"
             f"&pn={page_no}&pz={page_size}&po=1&np=1"
             "&ut=bd1d9ddb04089700cf9c27f6f7426281"
