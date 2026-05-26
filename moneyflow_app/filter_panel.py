@@ -34,6 +34,9 @@ class FilterPanel(QFrame):
     auto_refresh_toggled = pyqtSignal(bool)
     interval_changed = pyqtSignal(int)
     y_max_changed = pyqtSignal(float)  # Y轴最大值变化，0表示自动
+    pct_filter_changed = pyqtSignal(dict)  # 涨跌幅图表筛选变化
+    layout_changed = pyqtSignal(str)  # 布局变化: vertical/horizontal/hidden
+    pct_y_max_changed = pyqtSignal(float)  # 涨跌幅图表Y轴最大值变化，0表示自动
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -240,6 +243,59 @@ class FilterPanel(QFrame):
         
         layout.addWidget(display_group)
         
+        # ===== 涨跌幅图表设置 =====
+        pct_group = QGroupBox("涨跌幅图表")
+        pct_layout = QVBoxLayout(pct_group)
+        
+        # 涨幅前N
+        top_n_layout = QHBoxLayout()
+        top_n_layout.addWidget(QLabel("涨幅最多前:"))
+        self._pct_top_n_spin = QSpinBox()
+        self._pct_top_n_spin.setRange(0, 30)
+        self._pct_top_n_spin.setValue(5)
+        self._pct_top_n_spin.setSuffix(" 个")
+        self._pct_top_n_spin.valueChanged.connect(self._on_pct_filter_changed)
+        top_n_layout.addWidget(self._pct_top_n_spin)
+        pct_layout.addLayout(top_n_layout)
+        
+        # 跌幅前N
+        bottom_n_layout = QHBoxLayout()
+        bottom_n_layout.addWidget(QLabel("跌幅最多前:"))
+        self._pct_bottom_n_spin = QSpinBox()
+        self._pct_bottom_n_spin.setRange(0, 30)
+        self._pct_bottom_n_spin.setValue(5)
+        self._pct_bottom_n_spin.setSuffix(" 个")
+        self._pct_bottom_n_spin.valueChanged.connect(self._on_pct_filter_changed)
+        bottom_n_layout.addWidget(self._pct_bottom_n_spin)
+        pct_layout.addLayout(bottom_n_layout)
+        
+        # 布局切换
+        layout_btn_layout = QHBoxLayout()
+        layout_btn_layout.addWidget(QLabel("布局:"))
+        
+        self._layout_vertical_btn = QPushButton("上下")
+        self._layout_vertical_btn.setCheckable(True)
+        self._layout_vertical_btn.setChecked(True)
+        self._layout_vertical_btn.setFixedWidth(50)
+        self._layout_vertical_btn.clicked.connect(lambda: self._on_layout_changed("vertical"))
+        layout_btn_layout.addWidget(self._layout_vertical_btn)
+        
+        self._layout_horizontal_btn = QPushButton("左右")
+        self._layout_horizontal_btn.setCheckable(True)
+        self._layout_horizontal_btn.setFixedWidth(50)
+        self._layout_horizontal_btn.clicked.connect(lambda: self._on_layout_changed("horizontal"))
+        layout_btn_layout.addWidget(self._layout_horizontal_btn)
+        
+        self._layout_hidden_btn = QPushButton("折叠")
+        self._layout_hidden_btn.setCheckable(True)
+        self._layout_hidden_btn.setFixedWidth(50)
+        self._layout_hidden_btn.clicked.connect(lambda: self._on_layout_changed("hidden"))
+        layout_btn_layout.addWidget(self._layout_hidden_btn)
+        
+        pct_layout.addLayout(layout_btn_layout)
+        
+        layout.addWidget(pct_group)
+        
         # ===== 自动刷新设置 =====
         refresh_group = QGroupBox("刷新设置")
         refresh_layout = QVBoxLayout(refresh_group)
@@ -315,6 +371,19 @@ class FilterPanel(QFrame):
         """Y轴最大值变化"""
         self.y_max_changed.emit(value)
     
+    def _on_pct_filter_changed(self):
+        """涨跌幅筛选条件变化"""
+        filters = self.get_pct_filters()
+        self.pct_filter_changed.emit(filters)
+    
+    def _on_layout_changed(self, mode):
+        """布局切换"""
+        # 更新按钮状态
+        self._layout_vertical_btn.setChecked(mode == "vertical")
+        self._layout_horizontal_btn.setChecked(mode == "horizontal")
+        self._layout_hidden_btn.setChecked(mode == "hidden")
+        self.layout_changed.emit(mode)
+    
     def _on_auto_refresh_toggled(self, state):
         """自动刷新开关"""
         self.auto_refresh_toggled.emit(state == Qt.Checked)
@@ -363,6 +432,21 @@ class FilterPanel(QFrame):
             "search": self._search_edit.text().strip(),
             "spike_threshold": self._spike_threshold_spin.value(),
         }
+    
+    def get_pct_filters(self):
+        """获取涨跌幅图表筛选条件"""
+        return {
+            "top_n": self._pct_top_n_spin.value(),
+            "bottom_n": self._pct_bottom_n_spin.value(),
+        }
+    
+    def get_layout_mode(self):
+        """获取当前布局模式"""
+        if self._layout_hidden_btn.isChecked():
+            return "hidden"
+        elif self._layout_horizontal_btn.isChecked():
+            return "horizontal"
+        return "vertical"
     
     def set_status(self, message):
         """设置状态信息"""

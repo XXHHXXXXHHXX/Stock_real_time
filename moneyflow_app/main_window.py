@@ -20,7 +20,7 @@ from PyQt5.QtGui import QIcon, QFont, QColor
 
 from config import COLORS, INDEX_CODES, UPDATE_INTERVAL_MS
 from data_fetcher import DataFetcher
-from chart_widget import MoneyFlowChart, IndexBar
+from chart_widget import MoneyFlowChart, PctChangeChart, IndexBar
 from filter_panel import FilterPanel
 from sector_detail_panel import SectorDetailPanel
 
@@ -263,15 +263,19 @@ class MainWindow(QMainWindow):
         self._filter_panel.auto_refresh_toggled.connect(self._on_auto_refresh_toggled)
         self._filter_panel.interval_changed.connect(self._on_interval_changed)
         self._filter_panel.y_max_changed.connect(self._on_y_max_changed)
+        self._filter_panel.pct_filter_changed.connect(self._on_pct_filter_changed)
+        self._filter_panel.layout_changed.connect(self._on_layout_changed)
         body_splitter.addWidget(self._filter_panel)
         
-        # 图表区域
-        chart_container = QWidget()
-        chart_layout = QVBoxLayout(chart_container)
-        chart_layout.setContentsMargins(8, 8, 8, 8)
-        chart_layout.setSpacing(4)
+        # 图表区域 - 使用 splitter 容纳资金流向和涨跌幅两个图表
+        self._chart_splitter = QSplitter(Qt.Vertical)
         
-        # 标题
+        # ===== 资金流向图表 =====
+        flow_container = QWidget()
+        flow_layout = QVBoxLayout(flow_container)
+        flow_layout.setContentsMargins(8, 8, 8, 8)
+        flow_layout.setSpacing(4)
+        
         title_container = QWidget()
         title_layout = QHBoxLayout(title_container)
         title_layout.setContentsMargins(0, 0, 0, 0)
@@ -291,14 +295,49 @@ class MainWindow(QMainWindow):
         title_layout.addStretch()
         title_layout.addWidget(self._source_label)
         
-        chart_layout.addWidget(title_container)
+        flow_layout.addWidget(title_container)
         
-        # 图表
         self._chart = MoneyFlowChart()
         self._chart.signals.sector_clicked.connect(self._on_sector_clicked)
-        chart_layout.addWidget(self._chart)
+        flow_layout.addWidget(self._chart)
         
-        body_splitter.addWidget(chart_container)
+        self._chart_splitter.addWidget(flow_container)
+        
+        # ===== 涨跌幅图表 =====
+        pct_container = QWidget()
+        pct_layout = QVBoxLayout(pct_container)
+        pct_layout.setContentsMargins(8, 8, 8, 8)
+        pct_layout.setSpacing(4)
+        
+        pct_title_container = QWidget()
+        pct_title_layout = QHBoxLayout(pct_title_container)
+        pct_title_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self._pct_title_label = QLabel("板块涨跌幅实时监控")
+        self._pct_title_label.setStyleSheet(f"""
+            color: {COLORS['text']};
+            font-size: 16px;
+            font-weight: bold;
+            font-family: "Microsoft YaHei", "SimHei";
+        """)
+        pct_title_layout.addWidget(self._pct_title_label)
+        
+        self._pct_source_label = QLabel("")
+        self._pct_source_label.setStyleSheet(f"color: {COLORS['neutral']}; font-size: 11px;")
+        pct_title_layout.addStretch()
+        pct_title_layout.addWidget(self._pct_source_label)
+        
+        pct_layout.addWidget(pct_title_container)
+        
+        self._pct_chart = PctChangeChart()
+        self._pct_chart.signals.sector_clicked.connect(self._on_sector_clicked)
+        pct_layout.addWidget(self._pct_chart)
+        
+        self._chart_splitter.addWidget(pct_container)
+        # 默认上下均分
+        self._chart_splitter.setSizes([300, 300])
+        
+        body_splitter.addWidget(self._chart_splitter)
         body_splitter.setStretchFactor(1, 1)
         # 左侧保证至少能放下筛选面板（260px），右侧占剩余空间
         left_w = max(260, int(self.width() * 0.25))
@@ -430,6 +469,9 @@ class MainWindow(QMainWindow):
             QSplitter::handle:horizontal {{
                 width: 4px;
             }}
+            QSplitter::handle:vertical {{
+                height: 4px;
+            }}
         """)
     
     def _init_data(self):
@@ -482,8 +524,11 @@ class MainWindow(QMainWindow):
             data_source = result.get("data_source", "")
             
             if sectors_df is not None and len(sectors_df) > 0:
-                # 更新图表（追加当前时间点到历史记录）
+                # 更新资金流向图表（追加当前时间点到历史记录）
                 self._chart.update_data(sectors_df, current_time, trade_date)
+                
+                # 更新涨跌幅图表
+                self._pct_chart.update_data(sectors_df, current_time, trade_date)
                 
                 # 更新标题
                 self._title_label.setText("板块资金实时分时流向")
@@ -501,8 +546,25 @@ class MainWindow(QMainWindow):
                     time_display = f"{trade_date} {current_time}"
                 self._data_time_label.setText(f"数据时间: {time_display}")
                 
+                # 更新涨跌幅图表数据源标签
+                if "simulated" in data_source:
+                    pct_source_text = "数据源: 模拟数据"
+                else:
+                    pct_source_text = "数据源: 东方财富 实时"
+                self._pct_source_label.setText(pct_source_text)
+                
                 # 应用当前筛选
                 self._apply_current_filters()
+                
+                # 应用涨跌幅筛选和Y轴限制（首次）
+                if hasattr(self, '_pct_chart'):
+                    pct_filters = self._filter_panel.get_pct_filters()
+                    self._pct_chart.set_pct_filter(
+                        top_n=pct_filters.get("top_n", 5),
+                        bottom_n=pct_filters.get("bottom_n", 5)
+                    )
+                    # 涨跌幅图表Y轴默认固定±10%
+                    self._pct_chart.set_y_max_limit(10.0)
                 
                 visible_count = len(self._chart._visible_sectors) if hasattr(self._chart, '_visible_sectors') else 0
                 self._status_label.setText(
@@ -511,6 +573,10 @@ class MainWindow(QMainWindow):
                 
                 # 更新异动记录表格
                 self._update_spike_table()
+                
+                # 如果板块个股明细面板可见，自动刷新
+                if self._sector_detail_dock.isVisible() and getattr(self, '_current_sector_code', None):
+                    self._refresh_sector_detail()
             else:
                 self._status_label.setText("暂无数据")
                 
@@ -603,6 +669,31 @@ class MainWindow(QMainWindow):
         else:
             self._chart.set_y_max_limit(None)
     
+    def _on_pct_filter_changed(self, filters):
+        """涨跌幅图表筛选条件变化"""
+        if hasattr(self, '_pct_chart'):
+            self._pct_chart.set_pct_filter(
+                top_n=filters.get("top_n", 5),
+                bottom_n=filters.get("bottom_n", 5)
+            )
+    
+    def _on_layout_changed(self, mode):
+        """图表布局切换"""
+        if not hasattr(self, '_chart_splitter') or not hasattr(self, '_pct_chart'):
+            return
+        
+        if mode == "hidden":
+            # 隐藏涨跌幅图表
+            self._pct_chart.parentWidget().hide()
+        elif mode == "vertical":
+            # 上下屏
+            self._chart_splitter.setOrientation(Qt.Vertical)
+            self._pct_chart.parentWidget().show()
+        elif mode == "horizontal":
+            # 左右屏
+            self._chart_splitter.setOrientation(Qt.Horizontal)
+            self._pct_chart.parentWidget().show()
+    
     def _on_filter_changed(self, filters):
         """筛选条件变化"""
         self._current_filters = filters
@@ -693,6 +784,10 @@ class MainWindow(QMainWindow):
 
         print(f"[MainWindow] 板块被点击: {name} ({ts_code})")
 
+        # 记录当前打开的板块
+        self._current_sector_code = ts_code
+        self._current_sector_name = name
+
         # 更新 dock 标题
         self._sector_detail_dock.setWindowTitle(f"板块个股明细 - {name}")
 
@@ -711,9 +806,30 @@ class MainWindow(QMainWindow):
         """板块个股明细数据就绪"""
         self._sector_detail_panel.set_data(code, sector_name, df)
 
+    def _refresh_sector_detail(self):
+        """刷新当前板块的个股明细（自动更新时调用）"""
+        if self._fetcher is None:
+            return
+        if not getattr(self, '_current_sector_code', None):
+            return
+        
+        # 避免重复创建正在运行的worker
+        if hasattr(self, '_detail_worker') and self._detail_worker.isRunning():
+            return
+        
+        self._detail_worker = SectorDetailWorker(
+            self._fetcher,
+            self._current_sector_code,
+            self._current_sector_name
+        )
+        self._detail_worker.signals.detail_ready.connect(self._on_sector_detail_ready)
+        self._detail_worker.start()
+
     def _hide_sector_detail(self):
         """隐藏板块个股明细面板"""
         self._sector_detail_dock.hide()
+        self._current_sector_code = None
+        self._current_sector_name = None
 
     def closeEvent(self, event):
         """关闭事件"""

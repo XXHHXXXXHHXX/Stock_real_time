@@ -219,6 +219,8 @@ class MoneyFlowChart(PlotWidget):
             vb.setLimits(yMin=None, yMax=None,
                          xMin=None, xMax=None)
             self._auto_range()
+        # Y轴范围变化后重新计算标签位置
+        self._draw_labels()
     
     def set_filter(self, min_inflow=None, max_outflow=None, inflow_top_n=30, outflow_top_n=30, spike_threshold=20):
         """设置筛选条件"""
@@ -303,6 +305,7 @@ class MoneyFlowChart(PlotWidget):
         
         self._visible_sectors = visible
         self._update_plot_visibility()
+        self._draw_labels()
         
     def _update_plot_visibility(self):
         """更新图表可见性"""
@@ -537,20 +540,25 @@ class MoneyFlowChart(PlotWidget):
         # 按 y 坐标排序（从小到大）
         label_data.sort(key=lambda d: d["y"])
         
-        # 根据标签数量确定字体大小和最小间隔
+        # 根据标签数量确定字体大小
         n = len(label_data)
         if n <= 8:
             font_size = 11
-            min_gap = 16
         elif n <= 15:
             font_size = 10
-            min_gap = 14
         elif n <= 25:
             font_size = 9
-            min_gap = 12
         else:
             font_size = 8
-            min_gap = 11
+        
+        # 计算Y方向像素到数据坐标的转换比例，将最小像素间距转为数据坐标
+        vb = self.getViewBox()
+        _, y_range = vb.viewRange()
+        y_span = y_range[1] - y_range[0] if y_range[1] != y_range[0] else 1
+        pixels_per_data_y = self.height() / y_span if y_span > 0 and self.height() > 0 else 1
+        # 标签在屏幕上需要保持的最小像素间距（约一个标签高度）
+        min_pixel_gap = max(8, font_size - 1)
+        min_gap = min_pixel_gap / pixels_per_data_y if pixels_per_data_y > 0 else 1
         
         # 使用"推挤"算法计算每个标签的最终 y 位置，避免重叠
         placed = []  # [(final_y, min_gap), ...]
@@ -559,17 +567,16 @@ class MoneyFlowChart(PlotWidget):
             final_y = ideal_y
             # 与已放置的标签检查重叠，向下推挤
             for placed_y, pg in placed:
-                if abs(final_y - placed_y) < min_gap:
+                if abs(final_y - placed_y) < pg:
                     if final_y >= placed_y:
-                        final_y = placed_y + min_gap
+                        final_y = placed_y + pg
             placed.append((final_y, min_gap))
             data["final_y"] = final_y
         
-        # 计算当前视图下像素到数据坐标的缩放比
-        vb = self.getViewBox()
+        # 计算当前视图下X方向像素到数据坐标的缩放比
         x_range = vb.viewRange()[0]
         x_span = x_range[1] - x_range[0] if x_range[1] != x_range[0] else 1
-        pixels_per_data = self.width() / x_span if x_span > 0 else 1
+        pixels_per_data_x = self.width() / x_span if x_span > 0 and self.width() > 0 else 1
 
         # 绘制标签
         for data in label_data:
@@ -601,7 +608,7 @@ class MoneyFlowChart(PlotWidget):
 
             # 位置：固定像素偏移（12px），不随 X 轴缩放变化
             pixel_offset = 12
-            data_offset = pixel_offset / pixels_per_data if pixels_per_data > 0 else 8
+            data_offset = pixel_offset / pixels_per_data_x if pixels_per_data_x > 0 else 8
             label_x = x + data_offset
             label.setPos(label_x, y)
 
@@ -808,6 +815,333 @@ class MoneyFlowChart(PlotWidget):
         # 按净流入绝对值排序
         result.sort(key=lambda x: abs(x["net_amount"]), reverse=True)
         return result
+
+
+class PctChangeChart(MoneyFlowChart):
+    """
+    涨跌幅分时图组件
+    
+    与 MoneyFlowChart 共享大部分逻辑，但：
+    1. 历史点记录的是 pct_change（涨跌幅）而非 net_amount
+    2. 筛选基于涨跌幅排序，取涨幅前N和跌幅前N
+    3. 标签和tooltip显示涨跌幅百分比
+    """
+    
+    def __init__(self, parent=None):
+        # 先调用父类 __init__
+        super().__init__(parent)
+        
+        # 修改Y轴标签
+        self.setLabel("left", "涨跌幅 (%)", color="#666666", size="10px")
+        
+        # 涨跌幅筛选参数
+        self._pct_top_n = 5
+        self._pct_bottom_n = 5
+        
+        # 不需要异常波动检测
+        self._spike_threshold = 0
+        self._spike_records = []
+        self._spike_sectors = set()
+        
+        # 涨跌幅图表Y轴默认固定±10%
+        self.set_y_max_limit(10.0)
+    
+    def set_pct_filter(self, top_n=5, bottom_n=5):
+        """设置涨跌幅筛选参数"""
+        self._pct_top_n = top_n
+        self._pct_bottom_n = bottom_n
+        self._apply_filter()
+    
+    def update_data(self, sectors_df, current_time, trade_date):
+        """
+        更新图表数据 - 记录 pct_change 到历史点
+        """
+        try:
+            # 检查日期是否变化
+            if trade_date and trade_date != self._current_trade_date:
+                self._history_points.clear()
+                self._current_trade_date = trade_date
+                self._view_initialized = False
+                print(f"[PctChart] 新交易日: {trade_date}, 清空历史数据")
+            
+            time_key = current_time
+            new_sectors = {}
+            
+            for _, row in sectors_df.iterrows():
+                ts_code = row.get("ts_code", "")
+                name = row.get("name", "")
+                net_amount = float(row.get("net_amount", 0))
+                pct_change = float(row.get("pct_change", 0))
+                
+                color_idx = hash(ts_code) % len(COLORS["line_colors"])
+                line_color = QColor(COLORS["line_colors"][color_idx])
+                
+                new_sectors[ts_code] = {
+                    "name": name,
+                    "net_amount": net_amount,
+                    "pct_change": pct_change,
+                    "color": line_color,
+                }
+                
+                if ts_code not in self._history_points:
+                    self._history_points[ts_code] = []
+                
+                # 避免同一秒重复添加
+                if self._history_points[ts_code]:
+                    last_time, _ = self._history_points[ts_code][-1]
+                    if last_time == time_key:
+                        self._history_points[ts_code][-1] = (time_key, pct_change)
+                    else:
+                        self._history_points[ts_code].append((time_key, pct_change))
+                else:
+                    self._history_points[ts_code].append((time_key, pct_change))
+            
+            self._sector_info = new_sectors
+            
+            # 清除旧绘图
+            self._clear_plots()
+            
+            # 绘制新的曲线
+            self._draw_plots()
+            
+            # 应用筛选
+            self._apply_filter()
+            
+            # 自动调整坐标轴范围（仅在第一次加载或换日时）
+            if not self._view_initialized:
+                self._auto_range()
+                self._view_initialized = True
+                
+        except Exception as e:
+            print(f"[PctChart] 更新图表数据失败: {e}")
+            traceback.print_exc()
+    
+    def _apply_filter(self):
+        """应用涨跌幅筛选 - 取涨幅前N和跌幅前N"""
+        if not self._sector_info:
+            return
+        
+        items = [(code, info) for code, info in self._sector_info.items()]
+        # 按涨跌幅降序排列
+        items.sort(key=lambda x: x[1]["pct_change"], reverse=True)
+        
+        visible = set()
+        # 涨幅前N
+        if self._pct_top_n > 0:
+            for code, _ in items[:self._pct_top_n]:
+                visible.add(code)
+        # 跌幅前N
+        if self._pct_bottom_n > 0:
+            for code, _ in items[-self._pct_bottom_n:]:
+                visible.add(code)
+        
+        self._visible_sectors = visible
+        self._update_plot_visibility()
+        self._draw_labels()
+    
+    def _draw_labels(self):
+        """在曲线末端绘制智能标签（显示涨跌幅百分比）"""
+        # 清除旧标签
+        for label in self._label_items.values():
+            self.removeItem(label)
+        self._label_items.clear()
+        
+        # 收集所有可见板块的末端点信息
+        label_data = []
+        for ts_code in self._visible_sectors:
+            points = self._history_points.get(ts_code, [])
+            if not points:
+                continue
+            last_t, last_v = points[-1]
+            info = self._sector_info.get(ts_code)
+            if info is None:
+                continue
+            x = time_str_to_seconds(last_t)
+            y = last_v
+            label_data.append({
+                "ts_code": ts_code,
+                "x": x,
+                "y": y,
+                "name": info["name"],
+                "pct": last_v,
+            })
+        
+        if not label_data:
+            return
+        
+        # 按 y 坐标排序（从小到大）
+        label_data.sort(key=lambda d: d["y"])
+        
+        # 根据标签数量确定字体大小
+        n = len(label_data)
+        if n <= 8:
+            font_size = 11
+        elif n <= 15:
+            font_size = 10
+        elif n <= 25:
+            font_size = 9
+        else:
+            font_size = 8
+        
+        # 计算Y方向像素到数据坐标的转换比例，将最小像素间距转为数据坐标
+        vb = self.getViewBox()
+        _, y_range = vb.viewRange()
+        y_span = y_range[1] - y_range[0] if y_range[1] != y_range[0] else 1
+        pixels_per_data_y = self.height() / y_span if y_span > 0 and self.height() > 0 else 1
+        # 标签在屏幕上需要保持的最小像素间距（约一个标签高度）
+        min_pixel_gap = max(8, font_size - 1)
+        min_gap = min_pixel_gap / pixels_per_data_y if pixels_per_data_y > 0 else 1
+        
+        # 使用"推挤"算法计算每个标签的最终 y 位置，避免重叠
+        placed = []
+        for data in label_data:
+            ideal_y = data["y"]
+            final_y = ideal_y
+            for placed_y, pg in placed:
+                if abs(final_y - placed_y) < pg:
+                    if final_y >= placed_y:
+                        final_y = placed_y + pg
+            placed.append((final_y, min_gap))
+            data["final_y"] = final_y
+        
+        # 计算当前视图下X方向像素到数据坐标的缩放比
+        x_range = vb.viewRange()[0]
+        x_span = x_range[1] - x_range[0] if x_range[1] != x_range[0] else 1
+        pixels_per_data_x = self.width() / x_span if x_span > 0 and self.width() > 0 else 1
+
+        # 绘制标签
+        for data in label_data:
+            ts_code = data["ts_code"]
+            x = data["x"]
+            y = data["final_y"]
+            name = data["name"]
+            pct = data["pct"]
+
+            display_name = name if len(name) <= 5 else name[:4] + "…"
+
+            # 涨跌幅颜色：红涨绿跌
+            if pct > 0:
+                net_color = COLORS["positive"]
+                sign = "+"
+            elif pct < 0:
+                net_color = COLORS["negative"]
+                sign = ""
+            else:
+                net_color = COLORS["neutral"]
+                sign = ""
+
+            text = f"{display_name} {sign}{pct:.2f}%"
+
+            label = TextItem(text=text, color=QColor(net_color), anchor=(0, 0.5))
+            label.setFont(QFont("Microsoft YaHei", font_size))
+
+            pixel_offset = 12
+            data_offset = pixel_offset / pixels_per_data_x if pixels_per_data_x > 0 else 8
+            label_x = x + data_offset
+            label.setPos(label_x, y)
+
+            self.addItem(label)
+            self._label_items[ts_code] = label
+            self._label_data_positions[ts_code] = (x, y)
+    
+    def _on_mouse_moved(self, pos):
+        """鼠标移动时显示悬停提示（显示涨跌幅）"""
+        try:
+            view_pos = self.plotItem.vb.mapSceneToView(pos)
+            mx, my = view_pos.x(), view_pos.y()
+
+            closest_ts = None
+            closest_dist = float('inf')
+            closest_x = None
+            closest_y = None
+
+            for ts_code in self._visible_sectors:
+                plot_item = self._plot_items.get(ts_code)
+                if plot_item is None:
+                    continue
+                data = plot_item.getData()
+                if data is None or len(data[0]) == 0:
+                    continue
+
+                x_data, y_data = data
+                distances = np.sqrt((x_data - mx)**2 + (y_data - my)**2)
+                idx = np.argmin(distances)
+                dist = distances[idx]
+
+                if dist < closest_dist:
+                    closest_dist = dist
+                    closest_ts = ts_code
+                    closest_x = x_data[idx]
+                    closest_y = y_data[idx]
+
+            if closest_ts and closest_dist < 25:
+                info = self._sector_info.get(closest_ts, {})
+                name = info.get("name", "")
+                net = info.get("net_amount", 0)
+                pct = info.get("pct_change", 0)
+
+                if pct > 0:
+                    sign = "+"
+                elif pct < 0:
+                    sign = ""
+                else:
+                    sign = ""
+
+                tooltip_text = f"{name}\n净流入: {net:+.2f}亿\n涨跌幅: {sign}{pct:.2f}%"
+                self._tooltip.setText(tooltip_text)
+                self._tooltip.setPos(closest_x, closest_y)
+                self._tooltip.show()
+                self._tooltip_target = closest_ts
+            else:
+                self._tooltip.hide()
+                self._tooltip_target = None
+
+        except Exception:
+            pass
+    
+    def get_visible_sectors_info(self):
+        """获取当前可见板块的详细信息"""
+        result = []
+        for ts_code in self._visible_sectors:
+            info = self._sector_info.get(ts_code)
+            points = self._history_points.get(ts_code, [])
+            if info:
+                result.append({
+                    "ts_code": ts_code,
+                    "name": info["name"],
+                    "net_amount": info["pct_change"],  # 图例显示涨跌幅
+                    "pct_change": info["pct_change"],
+                    "color": info["color"].name(),
+                    "point_count": len(points),
+                })
+        # 按涨跌幅绝对值排序
+        result.sort(key=lambda x: abs(x["net_amount"]), reverse=True)
+        return result
+    
+    def _detect_spikes(self, time_key):
+        """涨跌幅图表不需要异动检测"""
+        pass
+    
+    def set_y_max_limit(self, max_value):
+        """设置Y轴最大值限制（百分比），None表示自动适应"""
+        self._y_max_limit = max_value
+        vb = self.getViewBox()
+        if max_value is not None and max_value > 0:
+            self.disableAutoRange(axis='y')
+            self.setMouseEnabled(x=True, y=False)
+            self.setAutoVisible(y=False)
+            vb.setLimits(yMin=-max_value, yMax=max_value,
+                         xMin=None, xMax=None)
+            self.setYRange(-max_value, max_value, padding=0)
+        else:
+            self.enableAutoRange(axis='y')
+            self.setMouseEnabled(x=True, y=True)
+            self.setAutoVisible(y=True)
+            vb.setLimits(yMin=None, yMax=None,
+                         xMin=None, xMax=None)
+            self._auto_range()
+        # Y轴范围变化后重新计算标签位置
+        self._draw_labels()
 
 
 class IndexBarWidget(pg.GraphicsLayoutWidget):
