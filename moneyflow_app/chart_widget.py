@@ -687,8 +687,8 @@ class MoneyFlowChart(PlotWidget):
             # 鼠标移动事件不应抛出异常
             pass
 
-    def mousePressEvent(self, event):
-        """鼠标点击事件 - 检测是否点击了板块标签或曲线"""
+    def mouseDoubleClickEvent(self, event):
+        """鼠标双击事件 - 检测是否双击了板块标签或曲线"""
         try:
             pos = event.pos()
             vb = self.plotItem.vb
@@ -716,7 +716,7 @@ class MoneyFlowChart(PlotWidget):
                         abs(my - ly) < label_h_data):
                     info = self._sector_info.get(ts_code, {})
                     name = info.get("name", "")
-                    print(f"[Chart] 点击板块标签: {name} ({ts_code})")
+                    print(f"[Chart] 双击板块标签: {name} ({ts_code})")
                     self.signals.sector_clicked.emit(ts_code, name)
                     event.accept()
                     return
@@ -742,7 +742,7 @@ class MoneyFlowChart(PlotWidget):
             if closest_ts and closest_dist < 20:
                 info = self._sector_info.get(closest_ts, {})
                 name = info.get("name", "")
-                print(f"[Chart] 点击板块曲线: {name} ({closest_ts})")
+                print(f"[Chart] 双击板块曲线: {name} ({closest_ts})")
                 self.signals.sector_clicked.emit(closest_ts, name)
                 event.accept()
                 return
@@ -750,7 +750,7 @@ class MoneyFlowChart(PlotWidget):
         except Exception:
             pass
 
-        super().mousePressEvent(event)
+        super().mouseDoubleClickEvent(event)
     
     def refresh_plot(self):
         """刷新图表"""
