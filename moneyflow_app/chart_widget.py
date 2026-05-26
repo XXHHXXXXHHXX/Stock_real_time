@@ -715,21 +715,29 @@ class MoneyFlowChart(PlotWidget):
             x_scale = self.width() / x_span if x_span > 0 else 1
             y_scale = self.height() / y_span if y_span > 0 else 1
 
-            view_pos = vb.mapSceneToView(pos)
+            scene_pos = self.mapToScene(pos)
+            view_pos = vb.mapSceneToView(scene_pos)
             mx, my = view_pos.x(), view_pos.y()
 
-            # 检查标签点击（标签宽约110px，高约18px）
-            label_w_data = 110 / x_scale if x_scale > 0 else 20
-            label_h_data = 18 / y_scale if y_scale > 0 else 4
-
+            # 检查标签点击：先找x方向在范围内的候选，再取y方向最近的
+            candidate_labels = []
             for ts_code, label in self._label_items.items():
                 if ts_code not in self._visible_sectors:
                     continue
                 label_pos = label.pos()
                 lx, ly = label_pos.x(), label_pos.y()
-                # anchor=(1, 0.5)，标签从 lx 向左延伸
-                if (lx - label_w_data <= mx <= lx and
-                        abs(my - ly) < label_h_data):
+                br = label.boundingRect()
+                label_w_data = br.width() / x_scale if x_scale > 0 else 20
+                label_h_data = br.height() / y_scale if y_scale > 0 else 4
+                # x方向在标签附近（向左延伸+右侧余量）
+                if lx - label_w_data * 1.3 <= mx <= lx + label_w_data * 0.5:
+                    candidate_labels.append((ts_code, ly, label_h_data, abs(my - ly)))
+            
+            if candidate_labels:
+                # 按y方向距离排序，取最近的
+                candidate_labels.sort(key=lambda x: x[3])
+                ts_code, ly, label_h_data, dy = candidate_labels[0]
+                if dy < label_h_data * 0.6:
                     info = self._sector_info.get(ts_code, {})
                     name = info.get("name", "")
                     print(f"[Chart] 双击板块标签: {name} ({ts_code})")
