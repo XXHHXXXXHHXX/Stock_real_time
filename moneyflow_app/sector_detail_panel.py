@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-板块个股明细面板 - 点击板块名称后显示该板块下所有个股的涨跌幅和资金流向
+板块个股明细面板 - 双击板块名称后按市值分三组显示个股涨跌幅和资金流向
 """
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView,
-    QPushButton
+    QPushButton, QScrollArea, QFrame
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QColor, QFont
@@ -14,10 +14,71 @@ from PyQt5.QtGui import QColor, QFont
 from config import COLORS
 
 
+def _make_table():
+    """创建统一的个股明细子表格"""
+    table = QTableWidget()
+    table.setColumnCount(6)
+    table.setHorizontalHeaderLabels([
+        "代码", "名称", "市值(亿)", "最新价", "涨跌幅", "主力净流入(亿)"
+    ])
+    h = table.horizontalHeader()
+    h.setSectionResizeMode(QHeaderView.Stretch)
+    h.setSectionResizeMode(0, QHeaderView.Fixed)
+    h.setSectionResizeMode(1, QHeaderView.Fixed)
+    table.setColumnWidth(0, 60)
+    table.setColumnWidth(1, 72)
+    table.setEditTriggers(QTableWidget.NoEditTriggers)
+    table.setSelectionBehavior(QTableWidget.SelectRows)
+    table.setAlternatingRowColors(True)
+    table.setSortingEnabled(True)
+    table.setStyleSheet(f"""
+        QTableWidget {{
+            background-color: {COLORS['panel_bg']};
+            color: {COLORS['text']};
+            font-size: 10px;
+            border: none;
+            gridline-color: {COLORS['border']};
+        }}
+        QTableWidget::item {{
+            padding: 1px 3px;
+        }}
+        QHeaderView::section {{
+            background-color: {COLORS['toolbar_bg']};
+            color: {COLORS['text']};
+            font-weight: bold;
+            font-size: 10px;
+            padding: 2px;
+            border: 1px solid {COLORS['border']};
+        }}
+    """)
+    return table
+
+
+def _make_group_label(text):
+    """创建分组标题"""
+    label = QLabel(text)
+    label.setStyleSheet(f"""
+        color: {COLORS['text']};
+        font-size: 12px;
+        font-weight: bold;
+        font-family: "Microsoft YaHei";
+        padding: 3px 6px;
+        background-color: {COLORS['toolbar_bg']};
+        border-radius: 3px;
+    """)
+    return label
+
+
 class SectorDetailPanel(QWidget):
-    """板块个股明细面板"""
+    """板块个股明细面板 - 按市值分三组"""
 
     close_requested = pyqtSignal()
+
+    _GROUPS = [
+        (1000, float('inf'), "千亿市值以上"),
+        (500, 1000, "500-1000亿"),
+        (0, 500, "500亿以下"),
+    ]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -69,56 +130,33 @@ class SectorDetailPanel(QWidget):
         """)
         layout.addWidget(self._summary_label)
 
-        # 表格
-        self._table = QTableWidget()
-        self._table.setColumnCount(8)
-        self._table.setHorizontalHeaderLabels([
-            "代码", "名称", "最新价", "涨跌幅", "主力净流入(亿)",
-            "超大单(亿)", "大单(亿)", "地区"
-        ])
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
-        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
-        self._table.setColumnWidth(0, 60)
-        self._table.setColumnWidth(1, 70)
-        self._table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self._table.setSelectionBehavior(QTableWidget.SelectRows)
-        self._table.setAlternatingRowColors(True)
-        self._table.setSortingEnabled(True)
-        self._table.setStyleSheet(f"""
-            QTableWidget {{
-                background-color: {COLORS['panel_bg']};
-                color: {COLORS['text']};
-                font-size: 11px;
-                border: none;
-                gridline-color: {COLORS['border']};
-            }}
-            QTableWidget::item {{
-                padding: 2px 4px;
-            }}
-            QHeaderView::section {{
-                background-color: {COLORS['toolbar_bg']};
-                color: {COLORS['text']};
-                font-weight: bold;
-                font-size: 11px;
-                padding: 4px;
-                border: 1px solid {COLORS['border']};
-            }}
-        """)
-        layout.addWidget(self._table)
+        # 滚动区域 — 包含三个分组表格
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.setSpacing(6)
+
+        self._group_labels = []
+        self._group_tables = []
+
+        for lo, hi, label_text in self._GROUPS:
+            glabel = _make_group_label(label_text)
+            self._group_labels.append(glabel)
+            scroll_layout.addWidget(glabel)
+
+            table = _make_table()
+            self._group_tables.append(table)
+            scroll_layout.addWidget(table)
+
+        scroll_layout.addStretch()
+        scroll.setWidget(scroll_content)
+        layout.addWidget(scroll)
 
     def set_data(self, concept_code, concept_name, df):
-        """设置板块个股数据
-
-        Parameters:
-        -----------
-        concept_code : str
-            板块代码
-        concept_name : str
-            板块名称
-        df : DataFrame
-            个股数据 [code, name, price, change_pct, net_inflow, ...]
-        """
         self._concept_code = concept_code
         self._concept_name = concept_name
 
@@ -126,7 +164,8 @@ class SectorDetailPanel(QWidget):
 
         if df is None or len(df) == 0:
             self._summary_label.setText("暂无数据")
-            self._table.setRowCount(0)
+            for t in self._group_tables:
+                t.setRowCount(0)
             return
 
         # 汇总
@@ -138,51 +177,56 @@ class SectorDetailPanel(QWidget):
             f"主力净流入合计 {total_inflow:+.2f} 亿"
         )
 
-        # 填充表格
-        self._table.setSortingEnabled(False)
-        self._table.setRowCount(len(df))
+        # 按三组分别填充
+        for idx, (lo, hi, _) in enumerate(self._GROUPS):
+            label = self._group_labels[idx]
+            table = self._group_tables[idx]
 
-        for i, (_, row) in enumerate(df.iterrows()):
-            code = str(row.get('code', ''))
-            name = str(row.get('name', ''))
-            price = row.get('price', 0)
-            change_pct = row.get('change_pct', 0)
-            net_inflow = row.get('net_inflow', 0)
-            super_large = row.get('super_large_inflow', 0)
-            large = row.get('large_inflow', 0)
-            area = str(row.get('area', ''))
+            # 筛选该组个股，按涨跌幅降序排列
+            mask = (df['market_cap'] >= lo) & (df['market_cap'] < hi)
+            group_df = df[mask].sort_values('change_pct', ascending=False)
 
-            items = [
-                (code, None),
-                (name, None),
-                (f"{price:.2f}", change_pct),
-                (f"{change_pct:+.2f}%", change_pct),
-                (f"{net_inflow:+.2f}", net_inflow),
-                (f"{super_large:+.2f}", super_large),
-                (f"{large:+.2f}", large),
-                (area, None),
-            ]
+            # 更新组标题，显示数量和净流入合计
+            grp_total = group_df['net_inflow'].sum()
+            label.setText(f"{label.text().split(' (')[0]} ({len(group_df)}只, 净流入 {grp_total:+.1f}亿)")
 
-            for col, (text, value_for_color) in enumerate(items):
-                item = QTableWidgetItem(text)
-                item.setTextAlignment(Qt.AlignCenter)
+            table.setSortingEnabled(False)
+            table.setRowCount(len(group_df))
 
-                if value_for_color is not None:
-                    if value_for_color > 0:
-                        item.setForeground(QColor(COLORS["positive"]))
-                    elif value_for_color < 0:
-                        item.setForeground(QColor(COLORS["negative"]))
+            for i, (_, row) in enumerate(group_df.iterrows()):
+                code = str(row.get('code', ''))
+                name = str(row.get('name', ''))
+                mcap = row.get('market_cap', 0)
+                price = row.get('price', 0)
+                change_pct = row.get('change_pct', 0)
+                net_inflow = row.get('net_inflow', 0)
 
-                self._table.setItem(i, col, item)
+                entries = [
+                    (code, None),
+                    (name, None),
+                    (f"{mcap:.0f}", None),
+                    (f"{price:.2f}", change_pct),
+                    (f"{change_pct:+.2f}%", change_pct),
+                    (f"{net_inflow:+.2f}", net_inflow),
+                ]
 
-        self._table.setSortingEnabled(True)
-        # 默认按主力净流入降序排列
-        self._table.sortByColumn(4, Qt.DescendingOrder)
+                for col, (text, val_for_color) in enumerate(entries):
+                    item = QTableWidgetItem(text)
+                    item.setTextAlignment(Qt.AlignCenter)
+                    if val_for_color is not None:
+                        if val_for_color > 0:
+                            item.setForeground(QColor(COLORS["positive"]))
+                        elif val_for_color < 0:
+                            item.setForeground(QColor(COLORS["negative"]))
+                    table.setItem(i, col, item)
+
+            table.setSortingEnabled(True)
 
     def clear_data(self):
-        """清空数据"""
         self._concept_code = ""
         self._concept_name = ""
         self._title_label.setText("板块个股明细")
         self._summary_label.setText("")
-        self._table.setRowCount(0)
+        for label, t in zip(self._group_labels, self._group_tables):
+            label.setText(label.text().split(' (')[0])
+            t.setRowCount(0)

@@ -646,7 +646,7 @@ class DataFetcher:
             "fid=f62&po=1&pz=500&pn=1&np=1&fltt=2&invt=2&"
             "ut=b2884a393a59ad64002292a3e90d46a5&"
             f"fs=b:{concept_code}&"
-            "fields=f12,f14,f2,f3,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87,f102,f204,f205,f124,f1,f13"
+            "fields=f12,f14,f2,f3,f20,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87,f102,f204,f205,f124,f1,f13"
             f"&_={int(time.time() * 1000)}"
         )
 
@@ -663,6 +663,7 @@ class DataFetcher:
                 name = item.get('f14', '')
                 price = item.get('f2')
                 change_pct = item.get('f3')
+                market_cap = item.get('f20')  # 总市值（元）
                 net_inflow = item.get('f62')  # 主力净流入（元）
                 net_flow_5day = item.get('f184')  # 5日净流入
                 super_large_inflow = item.get('f66')  # 超大单净流入
@@ -686,6 +687,7 @@ class DataFetcher:
                     'name': str(name),
                     'price': safe_float(price),
                     'change_pct': safe_float(change_pct),
+                    'market_cap': round(safe_float(market_cap, 1e8), 2),  # 总市值，转为亿元
                     'net_inflow': round(safe_float(net_inflow, 1e8), 2),  # 转为亿元
                     'net_flow_5day': round(safe_float(net_flow_5day, 1e8), 2),
                     'super_large_inflow': round(safe_float(super_large_inflow, 1e8), 2),
