@@ -311,7 +311,7 @@ class FilterPanel(QFrame):
         interval_layout.addWidget(QLabel("刷新间隔:"))
         self._interval_spin = QSpinBox()
         self._interval_spin.setRange(5, 3600)
-        self._interval_spin.setValue(60)
+        self._interval_spin.setValue(10)
         self._interval_spin.setSuffix(" 秒")
         self._interval_spin.valueChanged.connect(self.interval_changed.emit)
         interval_layout.addWidget(self._interval_spin)

@@ -12,7 +12,7 @@ TUSHARE_TOKEN = os.environ.get("TUSHARE_TOKEN", "2e77e914ab7c86c5b24077a81ab0c79
 TUSHARE_API_URL = "http://118.89.66.41:8010/"
 
 # 更新间隔（毫秒）
-UPDATE_INTERVAL_MS = 60000  # 默认60秒更新一次
+UPDATE_INTERVAL_MS = 10000  # 默认10秒更新一次
 
 # 指数代码
 INDEX_CODES = {
