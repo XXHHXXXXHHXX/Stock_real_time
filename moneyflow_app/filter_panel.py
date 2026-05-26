@@ -233,7 +233,7 @@ class FilterPanel(QFrame):
         self._y_max_spin = QDoubleSpinBox()
         self._y_max_spin.setRange(0, 5000)
         self._y_max_spin.setDecimals(0)
-        self._y_max_spin.setValue(0)
+        self._y_max_spin.setValue(500)
         self._y_max_spin.setSuffix(" 亿")
         self._y_max_spin.setSpecialValueText("自动")
         self._y_max_spin.setToolTip("设置Y轴固定最大值，0表示自动适应")
@@ -401,7 +401,7 @@ class FilterPanel(QFrame):
         self._show_inflow_only.setChecked(False)
         self._show_outflow_only.setChecked(False)
         self._search_edit.clear()
-        self._y_max_spin.setValue(0)
+        self._y_max_spin.setValue(500)
         self._on_filter_changed()
     
     def get_filters(self):
