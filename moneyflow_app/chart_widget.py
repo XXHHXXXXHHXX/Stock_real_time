@@ -507,7 +507,7 @@ class MoneyFlowChart(PlotWidget):
                 print(f"[Chart] 自动调整范围失败: {e}")
     
     def _draw_labels(self):
-        """在曲线末端绘制智能标签，自动避免重叠"""
+        """在右侧绘制图例式标签，正负半区分离，字体自适应缩放"""
         # 清除旧标签
         for label in self._label_items.values():
             self.removeItem(label)
@@ -523,12 +523,8 @@ class MoneyFlowChart(PlotWidget):
             info = self._sector_info.get(ts_code)
             if info is None:
                 continue
-            x = time_str_to_seconds(last_t)
-            y = last_v
             label_data.append({
                 "ts_code": ts_code,
-                "x": x,
-                "y": y,
                 "name": info["name"],
                 "net": info["net_amount"],
                 "pct": info["pct_change"],
@@ -537,52 +533,74 @@ class MoneyFlowChart(PlotWidget):
         if not label_data:
             return
         
-        # 按 y 坐标排序（从小到大）
-        label_data.sort(key=lambda d: d["y"])
-        
-        # 根据标签数量确定字体大小
-        n = len(label_data)
-        if n <= 8:
-            font_size = 11
-        elif n <= 15:
-            font_size = 10
-        elif n <= 25:
-            font_size = 9
-        else:
-            font_size = 8
-        
         # 获取当前视图范围
         vb = self.getViewBox()
         x_range, y_range = vb.viewRange()
         y_min, y_max = y_range
         x_min, x_max = x_range
         
-        # 标签垂直方向在Y轴范围内均匀分布，留出上下边距
-        margin = (y_max - y_min) * 0.05
-        usable_min = y_min + margin
-        usable_max = y_max - margin
+        # 分离正负半区
+        positive_data = [d for d in label_data if d["net"] > 0]
+        negative_data = [d for d in label_data if d["net"] < 0]
+        zero_data = [d for d in label_data if d["net"] == 0]
         
-        # 按净流入降序排列（正值在上，负值在下）
-        label_data.sort(key=lambda d: d["net"], reverse=True)
+        n_pos = len(positive_data)
+        n_neg = len(negative_data)
+        n_zero = len(zero_data)
+        n = len(label_data)
         
-        for i, data in enumerate(label_data):
-            if n == 1:
-                data["final_y"] = (usable_min + usable_max) / 2
-            else:
-                data["final_y"] = usable_max - i * (usable_max - usable_min) / (n - 1)
+        # 根据图表高度和标签数量计算字体大小
+        chart_h = self.height() if self.height() > 0 else 400
+        # 计算最密集半区的像素间距
+        pos_pixel_gap = chart_h * (y_max / (y_max - y_min)) / max(n_pos, 1) if (y_max - y_min) > 0 else chart_h / 2 / max(n_pos, 1)
+        neg_pixel_gap = chart_h * (-y_min / (y_max - y_min)) / max(n_neg, 1) if (y_max - y_min) > 0 else chart_h / 2 / max(n_neg, 1)
+        min_pixel_gap = min(pos_pixel_gap, neg_pixel_gap) if (n_pos > 0 and n_neg > 0) else (pos_pixel_gap if n_pos > 0 else neg_pixel_gap)
+        # 字体大小：每个标签至少占 font_size * 1.3 像素
+        font_size = int(min(min_pixel_gap / 1.3, 11))
+        font_size = max(font_size, 6)  # 最小6px
+        
+        # 正值标签：在 [0, y_max] 内均匀分布（留出边距）
+        if n_pos > 0:
+            positive_data.sort(key=lambda d: d["net"], reverse=True)
+            margin_pos = (y_max - 0) * 0.03
+            usable_max = y_max - margin_pos
+            usable_min = 0 + margin_pos * 0.5
+            for i, data in enumerate(positive_data):
+                if n_pos == 1:
+                    data["final_y"] = (usable_min + usable_max) / 2
+                else:
+                    data["final_y"] = usable_max - i * (usable_max - usable_min) / (n_pos - 1)
+        
+        # 负值标签：在 [y_min, 0] 内均匀分布
+        if n_neg > 0:
+            negative_data.sort(key=lambda d: d["net"])  # 最负的在最下面
+            margin_neg = (0 - y_min) * 0.03
+            usable_max = 0 - margin_neg * 0.5
+            usable_min = y_min + margin_neg
+            for i, data in enumerate(negative_data):
+                if n_neg == 1:
+                    data["final_y"] = (usable_min + usable_max) / 2
+                else:
+                    data["final_y"] = usable_max - i * (usable_max - usable_min) / (n_neg - 1)
+        
+        # 零值标签放在0轴附近
+        for d in zero_data:
+            d["final_y"] = 0
+        
+        # 合并并排序：按最终y坐标从上到下
+        all_data = positive_data + zero_data + negative_data
         
         # 标签固定在右侧，留出2%边距
         label_x = x_max - (x_max - x_min) * 0.02
 
         # 绘制标签
-        for data in label_data:
+        for data in all_data:
             ts_code = data["ts_code"]
             y = data["final_y"]
             name = data["name"]
             net = data["net"]
             pct = data["pct"]
 
-            # 截断名称（最多5个字）
             display_name = name if len(name) <= 5 else name[:4] + "…"
 
             # 净流入颜色：红涨绿跌（A股习惯）
@@ -709,7 +727,8 @@ class MoneyFlowChart(PlotWidget):
                     continue
                 label_pos = label.pos()
                 lx, ly = label_pos.x(), label_pos.y()
-                if (abs(mx - lx) < label_w_data / 2 and
+                # anchor=(1, 0.5)，标签从 lx 向左延伸
+                if (lx - label_w_data <= mx <= lx and
                         abs(my - ly) < label_h_data):
                     info = self._sector_info.get(ts_code, {})
                     name = info.get("name", "")
@@ -930,7 +949,7 @@ class PctChangeChart(MoneyFlowChart):
         self._draw_labels()
     
     def _draw_labels(self):
-        """在曲线末端绘制智能标签（显示涨跌幅百分比）"""
+        """在右侧绘制图例式标签，正负半区分离，字体自适应缩放"""
         # 清除旧标签
         for label in self._label_items.values():
             self.removeItem(label)
@@ -946,12 +965,8 @@ class PctChangeChart(MoneyFlowChart):
             info = self._sector_info.get(ts_code)
             if info is None:
                 continue
-            x = time_str_to_seconds(last_t)
-            y = last_v
             label_data.append({
                 "ts_code": ts_code,
-                "x": x,
-                "y": y,
                 "name": info["name"],
                 "pct": last_v,
             })
@@ -959,45 +974,62 @@ class PctChangeChart(MoneyFlowChart):
         if not label_data:
             return
         
-        # 按 y 坐标排序（从小到大）
-        label_data.sort(key=lambda d: d["y"])
-        
-        # 根据标签数量确定字体大小
-        n = len(label_data)
-        if n <= 8:
-            font_size = 11
-        elif n <= 15:
-            font_size = 10
-        elif n <= 25:
-            font_size = 9
-        else:
-            font_size = 8
-        
         # 获取当前视图范围
         vb = self.getViewBox()
         x_range, y_range = vb.viewRange()
         y_min, y_max = y_range
         x_min, x_max = x_range
         
-        # 标签垂直方向在Y轴范围内均匀分布，留出上下边距
-        margin = (y_max - y_min) * 0.05
-        usable_min = y_min + margin
-        usable_max = y_max - margin
+        # 分离正负半区
+        positive_data = [d for d in label_data if d["pct"] > 0]
+        negative_data = [d for d in label_data if d["pct"] < 0]
+        zero_data = [d for d in label_data if d["pct"] == 0]
         
-        # 按涨跌幅降序排列（涨幅在上，跌幅在下）
-        label_data.sort(key=lambda d: d["pct"], reverse=True)
+        n_pos = len(positive_data)
+        n_neg = len(negative_data)
         
-        for i, data in enumerate(label_data):
-            if n == 1:
-                data["final_y"] = (usable_min + usable_max) / 2
-            else:
-                data["final_y"] = usable_max - i * (usable_max - usable_min) / (n - 1)
+        # 根据图表高度和标签数量计算字体大小
+        chart_h = self.height() if self.height() > 0 else 400
+        pos_pixel_gap = chart_h * (y_max / (y_max - y_min)) / max(n_pos, 1) if (y_max - y_min) > 0 else chart_h / 2 / max(n_pos, 1)
+        neg_pixel_gap = chart_h * (-y_min / (y_max - y_min)) / max(n_neg, 1) if (y_max - y_min) > 0 else chart_h / 2 / max(n_neg, 1)
+        min_pixel_gap = min(pos_pixel_gap, neg_pixel_gap) if (n_pos > 0 and n_neg > 0) else (pos_pixel_gap if n_pos > 0 else neg_pixel_gap)
+        font_size = int(min(min_pixel_gap / 1.3, 11))
+        font_size = max(font_size, 6)
+        
+        # 涨幅标签：在 [0, y_max] 内均匀分布
+        if n_pos > 0:
+            positive_data.sort(key=lambda d: d["pct"], reverse=True)
+            margin_pos = (y_max - 0) * 0.03
+            usable_max = y_max - margin_pos
+            usable_min = 0 + margin_pos * 0.5
+            for i, data in enumerate(positive_data):
+                if n_pos == 1:
+                    data["final_y"] = (usable_min + usable_max) / 2
+                else:
+                    data["final_y"] = usable_max - i * (usable_max - usable_min) / (n_pos - 1)
+        
+        # 跌幅标签：在 [y_min, 0] 内均匀分布
+        if n_neg > 0:
+            negative_data.sort(key=lambda d: d["pct"])  # 最负的在最下面
+            margin_neg = (0 - y_min) * 0.03
+            usable_max = 0 - margin_neg * 0.5
+            usable_min = y_min + margin_neg
+            for i, data in enumerate(negative_data):
+                if n_neg == 1:
+                    data["final_y"] = (usable_min + usable_max) / 2
+                else:
+                    data["final_y"] = usable_max - i * (usable_max - usable_min) / (n_neg - 1)
+        
+        for d in zero_data:
+            d["final_y"] = 0
+        
+        all_data = positive_data + zero_data + negative_data
         
         # 标签固定在右侧，留出2%边距
         label_x = x_max - (x_max - x_min) * 0.02
 
         # 绘制标签
-        for data in label_data:
+        for data in all_data:
             ts_code = data["ts_code"]
             y = data["final_y"]
             name = data["name"]
@@ -1018,7 +1050,6 @@ class PctChangeChart(MoneyFlowChart):
 
             text = f"{display_name} {sign}{pct:.2f}%"
 
-            # anchor=(1, 0.5) 表示右对齐，标签向左延伸
             label = TextItem(text=text, color=QColor(net_color), anchor=(1, 0.5))
             label.setFont(QFont("Microsoft YaHei", font_size))
             label.setPos(label_x, y)
