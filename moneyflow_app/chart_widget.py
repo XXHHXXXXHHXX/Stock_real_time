@@ -551,37 +551,32 @@ class MoneyFlowChart(PlotWidget):
         else:
             font_size = 8
         
-        # 计算Y方向像素到数据坐标的转换比例，将最小像素间距转为数据坐标
+        # 获取当前视图范围
         vb = self.getViewBox()
-        _, y_range = vb.viewRange()
-        y_span = y_range[1] - y_range[0] if y_range[1] != y_range[0] else 1
-        pixels_per_data_y = self.height() / y_span if y_span > 0 and self.height() > 0 else 1
-        # 标签在屏幕上需要保持的最小像素间距（约一个标签高度）
-        min_pixel_gap = max(8, font_size - 1)
-        min_gap = min_pixel_gap / pixels_per_data_y if pixels_per_data_y > 0 else 1
+        x_range, y_range = vb.viewRange()
+        y_min, y_max = y_range
+        x_min, x_max = x_range
         
-        # 使用"推挤"算法计算每个标签的最终 y 位置，避免重叠
-        placed = []  # [(final_y, min_gap), ...]
-        for data in label_data:
-            ideal_y = data["y"]
-            final_y = ideal_y
-            # 与已放置的标签检查重叠，向下推挤
-            for placed_y, pg in placed:
-                if abs(final_y - placed_y) < pg:
-                    if final_y >= placed_y:
-                        final_y = placed_y + pg
-            placed.append((final_y, min_gap))
-            data["final_y"] = final_y
+        # 标签垂直方向在Y轴范围内均匀分布，留出上下边距
+        margin = (y_max - y_min) * 0.05
+        usable_min = y_min + margin
+        usable_max = y_max - margin
         
-        # 计算当前视图下X方向像素到数据坐标的缩放比
-        x_range = vb.viewRange()[0]
-        x_span = x_range[1] - x_range[0] if x_range[1] != x_range[0] else 1
-        pixels_per_data_x = self.width() / x_span if x_span > 0 and self.width() > 0 else 1
+        # 按净流入降序排列（正值在上，负值在下）
+        label_data.sort(key=lambda d: d["net"], reverse=True)
+        
+        for i, data in enumerate(label_data):
+            if n == 1:
+                data["final_y"] = (usable_min + usable_max) / 2
+            else:
+                data["final_y"] = usable_max - i * (usable_max - usable_min) / (n - 1)
+        
+        # 标签固定在右侧，留出2%边距
+        label_x = x_max - (x_max - x_min) * 0.02
 
         # 绘制标签
         for data in label_data:
             ts_code = data["ts_code"]
-            x = data["x"]
             y = data["final_y"]
             name = data["name"]
             net = data["net"]
@@ -603,34 +598,29 @@ class MoneyFlowChart(PlotWidget):
 
             text = f"{display_name} {sign}{net:.1f}亿"
 
-            label = TextItem(text=text, color=QColor(net_color), anchor=(0, 0.5))
+            # anchor=(1, 0.5) 表示右对齐，标签向左延伸
+            label = TextItem(text=text, color=QColor(net_color), anchor=(1, 0.5))
             label.setFont(QFont("Microsoft YaHei", font_size))
-
-            # 位置：固定像素偏移（12px），不随 X 轴缩放变化
-            pixel_offset = 12
-            data_offset = pixel_offset / pixels_per_data_x if pixels_per_data_x > 0 else 8
-            label_x = x + data_offset
             label.setPos(label_x, y)
 
             self.addItem(label)
             self._label_items[ts_code] = label
-            self._label_data_positions[ts_code] = (x, y)
+            self._label_data_positions[ts_code] = (label_x, y)
 
     def _on_view_range_changed(self, vb, ranges):
-        """视图范围变化时，更新标签X位置使其始终紧贴曲线末端"""
+        """视图范围变化时，更新标签X位置使其始终固定在右侧"""
         if not self._label_items or not self._label_data_positions:
             return
         try:
             x_range = vb.viewRange()[0]
-            x_span = x_range[1] - x_range[0] if x_range[1] != x_range[0] else 1
-            pixels_per_data = self.width() / x_span if x_span > 0 else 1
-            pixel_offset = 12
-            data_offset = pixel_offset / pixels_per_data if pixels_per_data > 0 else 8
+            x_min, x_max = x_range
+            # 标签固定在右侧，留出2%边距
+            label_x = x_max - (x_max - x_min) * 0.02
 
             for ts_code, label in self._label_items.items():
                 if ts_code in self._label_data_positions:
-                    data_x, data_y = self._label_data_positions[ts_code]
-                    label.setPos(data_x + data_offset, data_y)
+                    _, data_y = self._label_data_positions[ts_code]
+                    label.setPos(label_x, data_y)
         except Exception:
             pass
 
@@ -983,36 +973,32 @@ class PctChangeChart(MoneyFlowChart):
         else:
             font_size = 8
         
-        # 计算Y方向像素到数据坐标的转换比例，将最小像素间距转为数据坐标
+        # 获取当前视图范围
         vb = self.getViewBox()
-        _, y_range = vb.viewRange()
-        y_span = y_range[1] - y_range[0] if y_range[1] != y_range[0] else 1
-        pixels_per_data_y = self.height() / y_span if y_span > 0 and self.height() > 0 else 1
-        # 标签在屏幕上需要保持的最小像素间距（约一个标签高度）
-        min_pixel_gap = max(8, font_size - 1)
-        min_gap = min_pixel_gap / pixels_per_data_y if pixels_per_data_y > 0 else 1
+        x_range, y_range = vb.viewRange()
+        y_min, y_max = y_range
+        x_min, x_max = x_range
         
-        # 使用"推挤"算法计算每个标签的最终 y 位置，避免重叠
-        placed = []
-        for data in label_data:
-            ideal_y = data["y"]
-            final_y = ideal_y
-            for placed_y, pg in placed:
-                if abs(final_y - placed_y) < pg:
-                    if final_y >= placed_y:
-                        final_y = placed_y + pg
-            placed.append((final_y, min_gap))
-            data["final_y"] = final_y
+        # 标签垂直方向在Y轴范围内均匀分布，留出上下边距
+        margin = (y_max - y_min) * 0.05
+        usable_min = y_min + margin
+        usable_max = y_max - margin
         
-        # 计算当前视图下X方向像素到数据坐标的缩放比
-        x_range = vb.viewRange()[0]
-        x_span = x_range[1] - x_range[0] if x_range[1] != x_range[0] else 1
-        pixels_per_data_x = self.width() / x_span if x_span > 0 and self.width() > 0 else 1
+        # 按涨跌幅降序排列（涨幅在上，跌幅在下）
+        label_data.sort(key=lambda d: d["pct"], reverse=True)
+        
+        for i, data in enumerate(label_data):
+            if n == 1:
+                data["final_y"] = (usable_min + usable_max) / 2
+            else:
+                data["final_y"] = usable_max - i * (usable_max - usable_min) / (n - 1)
+        
+        # 标签固定在右侧，留出2%边距
+        label_x = x_max - (x_max - x_min) * 0.02
 
         # 绘制标签
         for data in label_data:
             ts_code = data["ts_code"]
-            x = data["x"]
             y = data["final_y"]
             name = data["name"]
             pct = data["pct"]
@@ -1032,17 +1018,14 @@ class PctChangeChart(MoneyFlowChart):
 
             text = f"{display_name} {sign}{pct:.2f}%"
 
-            label = TextItem(text=text, color=QColor(net_color), anchor=(0, 0.5))
+            # anchor=(1, 0.5) 表示右对齐，标签向左延伸
+            label = TextItem(text=text, color=QColor(net_color), anchor=(1, 0.5))
             label.setFont(QFont("Microsoft YaHei", font_size))
-
-            pixel_offset = 12
-            data_offset = pixel_offset / pixels_per_data_x if pixels_per_data_x > 0 else 8
-            label_x = x + data_offset
             label.setPos(label_x, y)
 
             self.addItem(label)
             self._label_items[ts_code] = label
-            self._label_data_positions[ts_code] = (x, y)
+            self._label_data_positions[ts_code] = (label_x, y)
     
     def _on_mouse_moved(self, pos):
         """鼠标移动时显示悬停提示（显示涨跌幅）"""
