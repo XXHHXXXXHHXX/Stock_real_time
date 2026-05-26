@@ -205,6 +205,10 @@ class MainWindow(QMainWindow):
         # 应用样式
         self._apply_style()
         
+        # 手动应用筛选面板默认值（因为信号连接前控件已初始化，信号未触发）
+        self._on_y_max_changed(self._filter_panel._y_max_spin.value())
+        self._on_pct_filter_changed(self._filter_panel.get_pct_filters())
+        
         print("[MainWindow] 主窗口初始化完成")
     
     def _init_ui(self):
