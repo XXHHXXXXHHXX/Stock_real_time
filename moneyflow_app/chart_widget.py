@@ -594,6 +594,8 @@ class MoneyFlowChart(PlotWidget):
                 if hasattr(plot_item, 'curve') and plot_item.curve is not None:
                     plot_item.curve.setClickable(True, width=10)
                 plot_item.setData(times, values)
+                # 立即按当前筛选条件设置可见性，避免"全部显示再消失"的闪烁
+                plot_item.setVisible(ts_code in self._visible_sectors)
                 self._plot_items[ts_code] = plot_item
             except Exception as e:
                 print(f"[Chart] 绘制曲线 {ts_code} 失败: {e}")
