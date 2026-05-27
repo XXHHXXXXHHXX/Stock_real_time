@@ -23,18 +23,19 @@ from config import COLORS
 
 class PrepSignals(QObject):
     """多线程数据预处理完成信号"""
-    batch_ready = pyqtSignal(list)
+    batch_ready = pyqtSignal(int, list)
 
 
 class SectorBatchPrepWorker(QRunnable):
     """后台线程中并行预处理一批板块的绘制数据"""
-    def __init__(self, sector_batch, history_points, sector_info, spike_sectors, signals):
+    def __init__(self, sector_batch, history_points, sector_info, spike_sectors, signals, generation):
         super().__init__()
         self.sector_batch = sector_batch
         self.history_points = history_points
         self.sector_info = sector_info
         self.spike_sectors = spike_sectors
         self.signals = signals
+        self.generation = generation
     
     def run(self):
         results = []
@@ -65,7 +66,7 @@ class SectorBatchPrepWorker(QRunnable):
             line_width = 4 if ts_code in self.spike_sectors else 2
             results.append((ts_code, times, values, info, line_width))
         
-        self.signals.batch_ready.emit(results)
+        self.signals.batch_ready.emit(self.generation, results)
 
 
 def time_str_to_seconds(time_str):
@@ -214,6 +215,7 @@ class MoneyFlowChart(PlotWidget):
         self._async_prepared_data = []
         self._async_batches_completed = 0
         self._async_total_batches = 0
+        self._async_generation = 0
         
     def _init_style(self):
         """初始化图表样式 - 白色清爽主题"""
@@ -532,15 +534,20 @@ class MoneyFlowChart(PlotWidget):
         info_copy = self._sector_info.copy()
         spike_copy = self._spike_sectors.copy()
         
+        self._async_generation += 1
+        generation = self._async_generation
         self._prep_signals = PrepSignals()
         self._prep_signals.batch_ready.connect(self._on_batch_prepared)
         
         for batch in batches:
-            worker = SectorBatchPrepWorker(batch, hist_copy, info_copy, spike_copy, self._prep_signals)
+            worker = SectorBatchPrepWorker(batch, hist_copy, info_copy, spike_copy, self._prep_signals, generation)
             self._thread_pool.start(worker)
     
-    def _on_batch_prepared(self, results):
+    def _on_batch_prepared(self, generation, results):
         """后台线程预处理完成一批数据的回调（在主线程执行）"""
+        if generation != self._async_generation:
+            # 忽略旧世代的信号（已被新的 _start_async_draw 覆盖）
+            return
         self._async_prepared_data.extend(results)
         self._async_batches_completed += 1
         
@@ -593,9 +600,7 @@ class MoneyFlowChart(PlotWidget):
     
     def _finish_async_draw(self):
         """异步绘制完成后执行收尾操作"""
-        # 绘制曲线末端标签（对应 _draw_plots 末尾）
-        self._draw_labels()
-        # 应用筛选（对应 update_data 中的 _apply_filter）
+        # 应用筛选（会内部调用 _draw_labels 绘制正确标签）
         self._apply_filter()
         # 若 Y 轴已锁定，强制重置
         if self._y_max_limit is not None and self._y_max_limit > 0:
