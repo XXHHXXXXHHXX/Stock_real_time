@@ -222,14 +222,15 @@ class MoneyFlowChart(PlotWidget):
         # Y轴范围变化后重新计算标签位置
         self._draw_labels()
     
-    def set_filter(self, min_inflow=None, max_outflow=None, inflow_top_n=30, outflow_top_n=30, spike_threshold=20):
+    def set_filter(self, min_inflow=None, max_outflow=None, inflow_top_n=30, outflow_top_n=30, spike_threshold=20, apply=True):
         """设置筛选条件"""
         self._filter_min_inflow = min_inflow
         self._filter_max_outflow = max_outflow
         self._filter_inflow_top_n = inflow_top_n
         self._filter_outflow_top_n = outflow_top_n
         self._spike_threshold = spike_threshold
-        self._apply_filter()
+        if apply:
+            self._apply_filter()
         
     def _detect_spikes(self, time_key):
         """检测异常波动板块，超过阈值则记录并标记加粗"""
@@ -378,11 +379,11 @@ class MoneyFlowChart(PlotWidget):
             # 清除旧绘图
             self._clear_plots()
             
-            # 绘制新的曲线
-            self._draw_plots()
-            
-            # 应用筛选（动态切换前N名）
+            # 先应用筛选，确定可见板块
             self._apply_filter()
+            
+            # 只绘制可见板块的曲线
+            self._draw_plots()
 
             # 若 Y 轴已锁定，每次重绘后强制重置，防止 ViewBox 在
             # clear/draw 过程中绕过 disableAutoRange 重新计算范围
@@ -409,11 +410,14 @@ class MoneyFlowChart(PlotWidget):
         self._label_items.clear()
     
     def _draw_plots(self):
-        """绘制所有板块的折线（基于累积的历史点）"""
+        """绘制可见板块的折线（基于累积的历史点）"""
         if not self._history_points:
             return
         
-        for ts_code, info in self._sector_info.items():
+        for ts_code in self._visible_sectors:
+            info = self._sector_info.get(ts_code)
+            if info is None:
+                continue
             points = self._history_points.get(ts_code, [])
             if len(points) < 1:
                 continue
@@ -450,8 +454,7 @@ class MoneyFlowChart(PlotWidget):
                 print(f"[Chart] 绘制曲线 {ts_code} 失败: {e}")
                 continue
         
-        # 绘制曲线末端标签
-        self._draw_labels()
+        # 标签由 _apply_filter() 统一绘制，不再重复绘制
     
     def _auto_range(self):
         """自动调整坐标轴范围"""
@@ -778,8 +781,9 @@ class MoneyFlowChart(PlotWidget):
     
     def refresh_plot(self):
         """刷新图表"""
-        self._draw_plots()
+        self._clear_plots()
         self._apply_filter()
+        self._draw_plots()
         self._auto_range()
     
     def _on_timer(self):
@@ -863,11 +867,12 @@ class PctChangeChart(MoneyFlowChart):
         # 涨跌幅图表Y轴默认固定±10%
         self.set_y_max_limit(10.0)
     
-    def set_pct_filter(self, top_n=5, bottom_n=5):
+    def set_pct_filter(self, top_n=5, bottom_n=5, apply=True):
         """设置涨跌幅筛选参数"""
         self._pct_top_n = top_n
         self._pct_bottom_n = bottom_n
-        self._apply_filter()
+        if apply:
+            self._apply_filter()
     
     def update_data(self, sectors_df, current_time, trade_date):
         """
@@ -918,11 +923,11 @@ class PctChangeChart(MoneyFlowChart):
             # 清除旧绘图
             self._clear_plots()
             
-            # 绘制新的曲线
-            self._draw_plots()
-            
-            # 应用筛选
+            # 先应用筛选，确定可见板块
             self._apply_filter()
+            
+            # 只绘制可见板块的曲线
+            self._draw_plots()
             
             # 自动调整坐标轴范围（仅在第一次加载或换日时）
             if not self._view_initialized:

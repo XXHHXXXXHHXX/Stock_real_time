@@ -537,6 +537,41 @@ class MainWindow(QMainWindow):
             data_source = result.get("data_source", "")
             
             if sectors_df is not None and len(sectors_df) > 0:
+                # 先设置筛选条件（不立即应用，由 update_data 内部统一触发）
+                filters = self._filter_panel.get_filters()
+                min_inflow = filters.get("min_inflow")
+                max_outflow = filters.get("max_outflow")
+                inflow_top_n = filters.get("inflow_top_n", 30)
+                outflow_top_n = filters.get("outflow_top_n", 30)
+                inflow_only = filters.get("inflow_only", False)
+                outflow_only = filters.get("outflow_only", False)
+                search = filters.get("search", "")
+                spike_threshold = filters.get("spike_threshold", 20)
+                
+                if inflow_only:
+                    outflow_top_n = 0
+                if outflow_only:
+                    inflow_top_n = 0
+                
+                self._chart.set_filter(
+                    min_inflow=min_inflow,
+                    max_outflow=max_outflow,
+                    inflow_top_n=inflow_top_n,
+                    outflow_top_n=outflow_top_n,
+                    spike_threshold=spike_threshold,
+                    apply=False
+                )
+                
+                if hasattr(self, '_pct_chart'):
+                    pct_filters = self._filter_panel.get_pct_filters()
+                    self._pct_chart.set_pct_filter(
+                        top_n=pct_filters.get("top_n", 5),
+                        bottom_n=pct_filters.get("bottom_n", 5),
+                        apply=False
+                    )
+                    # 涨跌幅图表Y轴默认固定±10%
+                    self._pct_chart.set_y_max_limit(10.0)
+                
                 # 更新资金流向图表（追加当前时间点到历史记录）
                 self._chart.update_data(sectors_df, current_time, trade_date)
                 
@@ -566,18 +601,13 @@ class MainWindow(QMainWindow):
                     pct_source_text = "数据源: 东方财富 实时"
                 self._pct_source_label.setText(pct_source_text)
                 
-                # 应用当前筛选
-                self._apply_current_filters()
-                
-                # 应用涨跌幅筛选和Y轴限制（首次）
-                if hasattr(self, '_pct_chart'):
-                    pct_filters = self._filter_panel.get_pct_filters()
-                    self._pct_chart.set_pct_filter(
-                        top_n=pct_filters.get("top_n", 5),
-                        bottom_n=pct_filters.get("bottom_n", 5)
-                    )
-                    # 涨跌幅图表Y轴默认固定±10%
-                    self._pct_chart.set_y_max_limit(10.0)
+                # 搜索过滤
+                if search and hasattr(self._chart, '_visible_sectors'):
+                    for ts_code in list(self._chart._visible_sectors):
+                        info = self._chart._sector_info.get(ts_code, {})
+                        if search.lower() not in info.get("name", "").lower():
+                            self._chart._visible_sectors.discard(ts_code)
+                    self._chart._update_plot_visibility()
                 
                 visible_count = len(self._chart._visible_sectors) if hasattr(self._chart, '_visible_sectors') else 0
                 self._status_label.setText(
