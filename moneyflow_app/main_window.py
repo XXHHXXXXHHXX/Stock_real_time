@@ -23,6 +23,7 @@ from data_fetcher import DataFetcher
 from chart_widget import MoneyFlowChart, PctChangeChart, IndexBar
 from filter_panel import FilterPanel
 from sector_detail_panel import SectorDetailPanel
+from settings_manager import load_settings, save_settings
 
 
 class DataUpdateSignals(QObject):
@@ -209,6 +210,9 @@ class MainWindow(QMainWindow):
         self._on_y_max_changed(self._filter_panel._y_max_spin.value())
         self._on_pct_filter_changed(self._filter_panel.get_pct_filters())
         
+        # 加载并应用用户保存的配置
+        self._load_settings()
+        
         print("[MainWindow] 主窗口初始化完成")
     
     def _init_ui(self):
@@ -239,6 +243,11 @@ class MainWindow(QMainWindow):
                 padding: 4px 12px;
             }}
         """)
+        
+        # 折叠/展开筛选面板按钮
+        self._toggle_filter_action = QAction("☰ 筛选", self)
+        self._toggle_filter_action.triggered.connect(self._toggle_filter_panel)
+        toolbar.addAction(self._toggle_filter_action)
         
         # 设置按钮
         self._settings_action = QAction("⚙ 设置", self)
@@ -835,8 +844,56 @@ class MainWindow(QMainWindow):
         self._current_sector_code = None
         self._current_sector_name = None
 
+    def _toggle_filter_panel(self):
+        """折叠/展开左侧筛选面板"""
+        if self._filter_panel.isVisible():
+            self._filter_panel.hide()
+            self._toggle_filter_action.setText("☰ 筛选")
+        else:
+            self._filter_panel.show()
+            self._toggle_filter_action.setText("☰ 筛选")
+
+    def _load_settings(self):
+        """加载用户配置并应用到UI"""
+        settings = load_settings()
+        if not settings:
+            return
+        
+        # 恢复筛选面板状态
+        self._filter_panel.set_state(settings)
+        
+        # 应用资金流向筛选
+        self._on_filter_changed(self._filter_panel.get_filters())
+        
+        # 应用Y轴最大值
+        self._on_y_max_changed(self._filter_panel._y_max_spin.value())
+        
+        # 应用涨跌幅筛选
+        self._on_pct_filter_changed(self._filter_panel.get_pct_filters())
+        
+        # 应用布局
+        layout_mode = self._filter_panel.get_layout_mode()
+        self._on_layout_changed(layout_mode)
+        
+        # 应用刷新间隔
+        self._on_interval_changed(self._filter_panel.get_interval())
+        
+        # 应用自动刷新
+        self._on_auto_refresh_toggled(self._filter_panel._auto_refresh_check.isChecked())
+        
+        print("[MainWindow] 已加载用户配置")
+
+    def _save_settings(self):
+        """保存当前UI状态到配置文件"""
+        settings = self._filter_panel.get_state()
+        save_settings(settings)
+        print("[MainWindow] 配置已保存")
+
     def closeEvent(self, event):
         """关闭事件"""
+        # 保存配置
+        self._save_settings()
+        
         # 停止定时器
         self._update_timer.stop()
         

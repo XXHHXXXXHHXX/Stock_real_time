@@ -455,3 +455,75 @@ class FilterPanel(QFrame):
     def set_auto_refresh(self, enabled):
         """设置自动刷新状态"""
         self._auto_refresh_check.setChecked(enabled)
+    
+    def get_state(self):
+        """获取面板当前状态（用于持久化）"""
+        return {
+            "min_inflow": self._min_inflow_spin.value(),
+            "max_outflow": self._max_outflow_spin.value(),
+            "inflow_top_n": self._inflow_top_n_spin.value(),
+            "outflow_top_n": self._outflow_top_n_spin.value(),
+            "inflow_only": self._show_inflow_only.isChecked(),
+            "outflow_only": self._show_outflow_only.isChecked(),
+            "search": self._search_edit.text(),
+            "spike_threshold": self._spike_threshold_spin.value(),
+            "y_max": self._y_max_spin.value(),
+            "auto_refresh": self._auto_refresh_check.isChecked(),
+            "interval": self._interval_spin.value(),
+            "pct_top_n": self._pct_top_n_spin.value(),
+            "pct_bottom_n": self._pct_bottom_n_spin.value(),
+            "layout_mode": self.get_layout_mode(),
+        }
+    
+    def set_state(self, state):
+        """恢复面板状态（从持久化配置）"""
+        if not state:
+            return
+        
+        # 金额筛选
+        if "min_inflow" in state:
+            self._min_inflow_spin.setValue(state["min_inflow"])
+        if "max_outflow" in state:
+            self._max_outflow_spin.setValue(state["max_outflow"])
+        
+        # 显示数量
+        if "inflow_top_n" in state:
+            self._inflow_top_n_spin.setValue(state["inflow_top_n"])
+        if "outflow_top_n" in state:
+            self._outflow_top_n_spin.setValue(state["outflow_top_n"])
+        
+        # 仅显示流入/流出
+        if "inflow_only" in state:
+            self._show_inflow_only.setChecked(state["inflow_only"])
+        if "outflow_only" in state:
+            self._show_outflow_only.setChecked(state["outflow_only"])
+        
+        # 搜索
+        if "search" in state:
+            self._search_edit.setText(state["search"])
+        
+        # 异动阈值
+        if "spike_threshold" in state:
+            self._spike_threshold_spin.setValue(state["spike_threshold"])
+        
+        # Y轴最大
+        if "y_max" in state:
+            self._y_max_spin.setValue(state["y_max"])
+        
+        # 自动刷新
+        if "auto_refresh" in state:
+            self._auto_refresh_check.setChecked(state["auto_refresh"])
+        
+        # 刷新间隔
+        if "interval" in state:
+            self._interval_spin.setValue(state["interval"])
+        
+        # 涨跌幅图表筛选
+        if "pct_top_n" in state:
+            self._pct_top_n_spin.setValue(state["pct_top_n"])
+        if "pct_bottom_n" in state:
+            self._pct_bottom_n_spin.setValue(state["pct_bottom_n"])
+        
+        # 布局模式
+        if "layout_mode" in state:
+            self._on_layout_changed(state["layout_mode"])
