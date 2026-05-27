@@ -437,12 +437,77 @@ class MoneyFlowChart(PlotWidget):
             # 检测异常波动（在筛选前检测所有板块）
             self._detect_spikes(time_key)
             
-            # 启动异步分批绘制（不阻塞UI）
-            self._start_async_draw()
+            # 增量更新曲线：已有曲线更新数据，新增曲线绘制，移除不存在的曲线
+            self._update_plots_incrementally()
+            
+            # 应用筛选（更新可见性、绘制标签、调整坐标轴）
+            self._apply_filter()
+            
+            # 若 Y 轴已锁定，强制重置
+            if self._y_max_limit is not None and self._y_max_limit > 0:
+                self.setYRange(-self._y_max_limit, self._y_max_limit, padding=0)
+            
+            # 自动调整坐标轴范围（仅在第一次加载或换日时）
+            if not self._view_initialized:
+                self._auto_range()
+                self._view_initialized = True
             
         except Exception as e:
             print(f"[Chart] 更新图表数据失败: {e}")
             traceback.print_exc()
+    
+    def _update_plots_incrementally(self):
+        """增量更新曲线：已有曲线只更新数据，新增曲线才创建，移除不存在的曲线"""
+        current_codes = set(self._sector_info.keys())
+        old_codes = set(self._plot_items.keys())
+        
+        # 1. 移除不再存在的板块
+        for ts_code in old_codes - current_codes:
+            self.removeItem(self._plot_items[ts_code])
+            del self._plot_items[ts_code]
+        
+        # 2. 更新已有板块的数据，新增板块创建曲线
+        for ts_code, info in self._sector_info.items():
+            points = self._history_points.get(ts_code, [])
+            if len(points) < 1:
+                continue
+            
+            times = []
+            values = []
+            for t, v in points:
+                try:
+                    x = time_str_to_seconds(t)
+                    times.append(x)
+                    values.append(v)
+                except Exception:
+                    continue
+            
+            if len(times) < 1:
+                continue
+            
+            times = np.array(times, dtype=float)
+            values = np.array(values, dtype=float)
+            
+            color = info["color"]
+            line_width = 4 if ts_code in self._spike_sectors else 2
+            pen = mkPen(color=color, width=line_width)
+            
+            if ts_code in self._plot_items:
+                # 已有曲线，只更新数据和样式（避免重新创建导致的闪烁）
+                plot_item = self._plot_items[ts_code]
+                plot_item.setData(times, values)
+                plot_item.setPen(pen)
+                plot_item.setVisible(ts_code in self._visible_sectors)
+            else:
+                # 新曲线，创建
+                try:
+                    plot_item = self.plot(times, values, pen=pen, clickable=True)
+                    if hasattr(plot_item, 'curve') and plot_item.curve is not None:
+                        plot_item.curve.setClickable(True, width=10)
+                    plot_item.setVisible(ts_code in self._visible_sectors)
+                    self._plot_items[ts_code] = plot_item
+                except Exception as e:
+                    print(f"[Chart] 绘制曲线 {ts_code} 失败: {e}")
     
     def _clear_plots(self):
         """清除所有绘制的曲线和标签"""
@@ -937,7 +1002,9 @@ class MoneyFlowChart(PlotWidget):
     
     def refresh_plot(self):
         """刷新图表"""
-        self._start_async_draw()
+        self._update_plots_incrementally()
+        self._apply_filter()
+        self._auto_range()
     
     def _on_timer(self):
         """定时器回调"""
@@ -1072,20 +1139,20 @@ class PctChangeChart(MoneyFlowChart):
             
             self._sector_info = new_sectors
             
-            # 启动异步分批绘制（不阻塞UI）
-            self._start_async_draw()
+            # 增量更新曲线
+            self._update_plots_incrementally()
+            
+            # 应用筛选
+            self._apply_filter()
+            
+            # 自动调整坐标轴范围（仅在第一次加载或换日时）
+            if not self._view_initialized:
+                self._auto_range()
+                self._view_initialized = True
                 
         except Exception as e:
             print(f"[PctChart] 更新图表数据失败: {e}")
             traceback.print_exc()
-    
-    def _finish_async_draw(self):
-        """涨跌幅图表异步绘制完成后的收尾"""
-        self._draw_labels()
-        self._apply_filter()
-        if not self._view_initialized:
-            self._auto_range()
-            self._view_initialized = True
     
     def _apply_filter(self):
         """应用涨跌幅筛选 - 取涨幅前N和跌幅前N"""
