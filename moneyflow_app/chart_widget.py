@@ -13,12 +13,59 @@
 import pyqtgraph as pg
 from pyqtgraph import PlotWidget, mkPen, InfiniteLine, TextItem
 import numpy as np
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject, QRunnable, QThreadPool
 from PyQt5.QtGui import QColor, QFont
 from datetime import datetime
 import traceback
 
 from config import COLORS
+
+
+class PrepSignals(QObject):
+    """多线程数据预处理完成信号"""
+    batch_ready = pyqtSignal(list)
+
+
+class SectorBatchPrepWorker(QRunnable):
+    """后台线程中并行预处理一批板块的绘制数据"""
+    def __init__(self, sector_batch, history_points, sector_info, spike_sectors, signals):
+        super().__init__()
+        self.sector_batch = sector_batch
+        self.history_points = history_points
+        self.sector_info = sector_info
+        self.spike_sectors = spike_sectors
+        self.signals = signals
+    
+    def run(self):
+        results = []
+        for ts_code in self.sector_batch:
+            info = self.sector_info.get(ts_code)
+            if info is None:
+                continue
+            points = self.history_points.get(ts_code, [])
+            if len(points) < 1:
+                continue
+            
+            times = []
+            values = []
+            for t, v in points:
+                try:
+                    x = time_str_to_seconds(t)
+                    times.append(x)
+                    values.append(v)
+                except Exception:
+                    continue
+            
+            if len(times) < 1:
+                continue
+            
+            times = np.array(times, dtype=float)
+            values = np.array(values, dtype=float)
+            
+            line_width = 4 if ts_code in self.spike_sectors else 2
+            results.append((ts_code, times, values, info, line_width))
+        
+        self.signals.batch_ready.emit(results)
 
 
 def time_str_to_seconds(time_str):
@@ -160,6 +207,13 @@ class MoneyFlowChart(PlotWidget):
         self._draw_batch_timer.setSingleShot(False)
         self._async_sectors = []
         self._async_index = 0
+        
+        # 多线程数据预处理线程池
+        self._thread_pool = QThreadPool()
+        self._thread_pool.setMaxThreadCount(10)
+        self._async_prepared_data = []
+        self._async_batches_completed = 0
+        self._async_total_batches = 0
         
     def _init_style(self):
         """初始化图表样式 - 白色清爽主题"""
@@ -450,20 +504,51 @@ class MoneyFlowChart(PlotWidget):
         self._draw_labels()
     
     def _start_async_draw(self):
-        """启动异步分批绘制，避免阻塞UI事件循环"""
+        """启动异步分批绘制：多线程并行预处理数据 + 主线程分帧绘制"""
         # 如果上一次异步绘制未完成，先停止
         if self._draw_batch_timer.isActive():
             self._draw_batch_timer.stop()
-            try:
-                self._draw_batch_timer.timeout.disconnect(self._on_async_draw_tick)
-            except Exception:
-                pass
+            for slot in (self._on_async_draw_tick, self._on_async_draw_tick_prepared):
+                try:
+                    self._draw_batch_timer.timeout.disconnect(slot)
+                except Exception:
+                    pass
         
         self._clear_plots()
-        self._async_sectors = list(self._sector_info.keys())
-        self._async_index = 0
-        self._draw_batch_timer.timeout.connect(self._on_async_draw_tick)
-        self._draw_batch_timer.start(1)
+        sector_list = list(self._sector_info.keys())
+        if not sector_list:
+            self._finish_async_draw()
+            return
+        
+        # 将板块分成10批，由线程池并行预处理数据
+        batch_size = max(1, len(sector_list) // 10)
+        batches = [sector_list[i:i+batch_size] for i in range(0, len(sector_list), batch_size)]
+        self._async_total_batches = len(batches)
+        self._async_batches_completed = 0
+        self._async_prepared_data = []
+        
+        # 复制数据副本供后台线程使用（避免主线程数据变化导致竞争）
+        hist_copy = self._history_points.copy()
+        info_copy = self._sector_info.copy()
+        spike_copy = self._spike_sectors.copy()
+        
+        self._prep_signals = PrepSignals()
+        self._prep_signals.batch_ready.connect(self._on_batch_prepared)
+        
+        for batch in batches:
+            worker = SectorBatchPrepWorker(batch, hist_copy, info_copy, spike_copy, self._prep_signals)
+            self._thread_pool.start(worker)
+    
+    def _on_batch_prepared(self, results):
+        """后台线程预处理完成一批数据的回调（在主线程执行）"""
+        self._async_prepared_data.extend(results)
+        self._async_batches_completed += 1
+        
+        if self._async_batches_completed >= self._async_total_batches:
+            # 所有数据预处理完成，启动主线程分帧绘制
+            self._async_index = 0
+            self._draw_batch_timer.timeout.connect(self._on_async_draw_tick_prepared)
+            self._draw_batch_timer.start(1)
     
     def _on_async_draw_tick(self):
         """分批绘制回调，每批次绘制少量曲线后让出控制权给Qt事件循环"""
@@ -480,6 +565,31 @@ class MoneyFlowChart(PlotWidget):
                 return
             self._draw_single_sector(self._async_sectors[self._async_index])
             self._async_index += 1
+    
+    def _on_async_draw_tick_prepared(self):
+        """使用预计算数据的分帧绘制，每帧可处理更多（数据已准备好）"""
+        BATCH_SIZE = 10
+        for _ in range(BATCH_SIZE):
+            if self._async_index >= len(self._async_prepared_data):
+                self._draw_batch_timer.stop()
+                try:
+                    self._draw_batch_timer.timeout.disconnect(self._on_async_draw_tick_prepared)
+                except Exception:
+                    pass
+                self._finish_async_draw()
+                return
+            ts_code, times, values, info, line_width = self._async_prepared_data[self._async_index]
+            self._async_index += 1
+            
+            pen = mkPen(color=info["color"], width=line_width)
+            try:
+                plot_item = self.plot(times, values, pen=pen, clickable=True)
+                if hasattr(plot_item, 'curve') and plot_item.curve is not None:
+                    plot_item.curve.setClickable(True, width=10)
+                plot_item.setData(times, values)
+                self._plot_items[ts_code] = plot_item
+            except Exception as e:
+                print(f"[Chart] 绘制曲线 {ts_code} 失败: {e}")
     
     def _finish_async_draw(self):
         """异步绘制完成后执行收尾操作"""
