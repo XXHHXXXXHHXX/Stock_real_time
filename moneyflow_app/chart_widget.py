@@ -155,6 +155,12 @@ class MoneyFlowChart(PlotWidget):
         self._update_timer = QTimer()
         self._update_timer.timeout.connect(self._on_timer)
         
+        # 异步分批绘制定时器
+        self._draw_batch_timer = QTimer()
+        self._draw_batch_timer.setSingleShot(False)
+        self._async_sectors = []
+        self._async_index = 0
+        
     def _init_style(self):
         """初始化图表样式 - 白色清爽主题"""
         # 背景色
@@ -375,24 +381,8 @@ class MoneyFlowChart(PlotWidget):
             # 检测异常波动（在筛选前检测所有板块）
             self._detect_spikes(time_key)
             
-            # 清除旧绘图
-            self._clear_plots()
-            
-            # 绘制新的曲线
-            self._draw_plots()
-            
-            # 应用筛选（动态切换前N名）
-            self._apply_filter()
-
-            # 若 Y 轴已锁定，每次重绘后强制重置，防止 ViewBox 在
-            # clear/draw 过程中绕过 disableAutoRange 重新计算范围
-            if self._y_max_limit is not None and self._y_max_limit > 0:
-                self.setYRange(-self._y_max_limit, self._y_max_limit, padding=0)
-
-            # 自动调整坐标轴范围（仅在第一次加载或换日时）
-            if not self._view_initialized:
-                self._auto_range()
-                self._view_initialized = True
+            # 启动异步分批绘制（不阻塞UI）
+            self._start_async_draw()
             
         except Exception as e:
             print(f"[Chart] 更新图表数据失败: {e}")
@@ -408,50 +398,102 @@ class MoneyFlowChart(PlotWidget):
             self.removeItem(label)
         self._label_items.clear()
     
+    def _draw_single_sector(self, ts_code):
+        """绘制单个板块的曲线"""
+        info = self._sector_info.get(ts_code)
+        if info is None:
+            return
+        points = self._history_points.get(ts_code, [])
+        if len(points) < 1:
+            return
+        
+        times = []
+        values = []
+        
+        for t, v in points:
+            try:
+                x = time_str_to_seconds(t)
+                times.append(x)
+                values.append(v)
+            except Exception:
+                continue
+        
+        if len(times) < 1:
+            return
+        
+        times = np.array(times, dtype=float)
+        values = np.array(values, dtype=float)
+        
+        color = info["color"]
+        # 异常板块曲线加粗
+        line_width = 4 if ts_code in self._spike_sectors else 2
+        pen = mkPen(color=color, width=line_width)
+        
+        try:
+            plot_item = self.plot(times, values, pen=pen, clickable=True)
+            if hasattr(plot_item, 'curve') and plot_item.curve is not None:
+                plot_item.curve.setClickable(True, width=10)
+            plot_item.setData(times, values)
+            self._plot_items[ts_code] = plot_item
+        except Exception as e:
+            print(f"[Chart] 绘制曲线 {ts_code} 失败: {e}")
+    
     def _draw_plots(self):
         """绘制所有板块的折线（基于累积的历史点）"""
         if not self._history_points:
             return
         
-        for ts_code, info in self._sector_info.items():
-            points = self._history_points.get(ts_code, [])
-            if len(points) < 1:
-                continue
-            
-            times = []
-            values = []
-            
-            for t, v in points:
-                try:
-                    x = time_str_to_seconds(t)
-                    times.append(x)
-                    values.append(v)
-                except Exception:
-                    continue
-            
-            if len(times) < 1:
-                continue
-            
-            times = np.array(times, dtype=float)
-            values = np.array(values, dtype=float)
-            
-            color = info["color"]
-            # 异常板块曲线加粗
-            line_width = 4 if ts_code in self._spike_sectors else 2
-            pen = mkPen(color=color, width=line_width)
-            
-            try:
-                plot_item = self.plot(times, values, pen=pen, clickable=True)
-                if hasattr(plot_item, 'curve') and plot_item.curve is not None:
-                    plot_item.curve.setClickable(True, width=10)
-                plot_item.setData(times, values)
-                self._plot_items[ts_code] = plot_item
-            except Exception as e:
-                print(f"[Chart] 绘制曲线 {ts_code} 失败: {e}")
-                continue
+        for ts_code in self._sector_info:
+            self._draw_single_sector(ts_code)
         
         # 绘制曲线末端标签
         self._draw_labels()
+    
+    def _start_async_draw(self):
+        """启动异步分批绘制，避免阻塞UI事件循环"""
+        # 如果上一次异步绘制未完成，先停止
+        if self._draw_batch_timer.isActive():
+            self._draw_batch_timer.stop()
+            try:
+                self._draw_batch_timer.timeout.disconnect(self._on_async_draw_tick)
+            except Exception:
+                pass
+        
+        self._clear_plots()
+        self._async_sectors = list(self._sector_info.keys())
+        self._async_index = 0
+        self._draw_batch_timer.timeout.connect(self._on_async_draw_tick)
+        self._draw_batch_timer.start(1)
+    
+    def _on_async_draw_tick(self):
+        """分批绘制回调，每批次绘制少量曲线后让出控制权给Qt事件循环"""
+        BATCH_SIZE = 5
+        for _ in range(BATCH_SIZE):
+            if self._async_index >= len(self._async_sectors):
+                # 所有曲线绘制完成
+                self._draw_batch_timer.stop()
+                try:
+                    self._draw_batch_timer.timeout.disconnect(self._on_async_draw_tick)
+                except Exception:
+                    pass
+                self._finish_async_draw()
+                return
+            self._draw_single_sector(self._async_sectors[self._async_index])
+            self._async_index += 1
+    
+    def _finish_async_draw(self):
+        """异步绘制完成后执行收尾操作"""
+        # 绘制曲线末端标签（对应 _draw_plots 末尾）
+        self._draw_labels()
+        # 应用筛选（对应 update_data 中的 _apply_filter）
+        self._apply_filter()
+        # 若 Y 轴已锁定，强制重置
+        if self._y_max_limit is not None and self._y_max_limit > 0:
+            self.setYRange(-self._y_max_limit, self._y_max_limit, padding=0)
+        # 自动调整坐标轴范围（仅在第一次加载或换日时）
+        if not self._view_initialized:
+            self._auto_range()
+            self._view_initialized = True
     
     def _auto_range(self):
         """自动调整坐标轴范围"""
@@ -778,9 +820,7 @@ class MoneyFlowChart(PlotWidget):
     
     def refresh_plot(self):
         """刷新图表"""
-        self._draw_plots()
-        self._apply_filter()
-        self._auto_range()
+        self._start_async_draw()
     
     def _on_timer(self):
         """定时器回调"""
@@ -915,23 +955,20 @@ class PctChangeChart(MoneyFlowChart):
             
             self._sector_info = new_sectors
             
-            # 清除旧绘图
-            self._clear_plots()
-            
-            # 绘制新的曲线
-            self._draw_plots()
-            
-            # 应用筛选
-            self._apply_filter()
-            
-            # 自动调整坐标轴范围（仅在第一次加载或换日时）
-            if not self._view_initialized:
-                self._auto_range()
-                self._view_initialized = True
+            # 启动异步分批绘制（不阻塞UI）
+            self._start_async_draw()
                 
         except Exception as e:
             print(f"[PctChart] 更新图表数据失败: {e}")
             traceback.print_exc()
+    
+    def _finish_async_draw(self):
+        """涨跌幅图表异步绘制完成后的收尾"""
+        self._draw_labels()
+        self._apply_filter()
+        if not self._view_initialized:
+            self._auto_range()
+            self._view_initialized = True
     
     def _apply_filter(self):
         """应用涨跌幅筛选 - 取涨幅前N和跌幅前N"""
