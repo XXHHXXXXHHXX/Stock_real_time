@@ -13,7 +13,8 @@ from PyQt5.QtWidgets import (
     QStatusBar, QLabel, QProgressBar, QSplitter,
     QMessageBox, QApplication, QAction, QMenu, QToolBar,
     QDialog, QLineEdit, QFormLayout, QDialogButtonBox,
-    QDockWidget, QTableWidget, QTableWidgetItem, QHeaderView
+    QDockWidget, QTableWidget, QTableWidgetItem, QHeaderView,
+    QTextEdit
 )
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, QObject, QSize
 from PyQt5.QtGui import QIcon, QFont, QColor
@@ -24,6 +25,7 @@ from chart_widget import MoneyFlowChart, PctChangeChart, IndexBar
 from filter_panel import FilterPanel
 from sector_detail_panel import SectorDetailPanel
 from settings_manager import load_settings, save_settings
+from signal_detector import SIGNAL_NAMES, SIGNAL_COLORS
 
 
 class DataUpdateSignals(QObject):
@@ -213,6 +215,10 @@ class MainWindow(QMainWindow):
         # 加载并应用用户保存的配置
         self._load_settings()
         
+        # 加载信号历史
+        self._load_signal_history()
+        self._update_signal_panel()
+        
         print("[MainWindow] 主窗口初始化完成")
     
     def _init_ui(self):
@@ -312,6 +318,7 @@ class MainWindow(QMainWindow):
         
         self._chart = MoneyFlowChart()
         self._chart.signals.sector_clicked.connect(self._on_sector_clicked)
+        self._chart.signals.new_signals.connect(self._on_new_signals)
         flow_layout.addWidget(self._chart)
         
         self._chart_splitter.addWidget(flow_container)
@@ -433,6 +440,48 @@ class MainWindow(QMainWindow):
         """)
         self._spike_dock.setWidget(self._spike_table)
         self.addDockWidget(Qt.RightDockWidgetArea, self._spike_dock)
+
+        # ===== 智能信号面板（DockWidget） =====
+        self._signal_dock = QDockWidget("智能信号", self)
+        self._signal_dock.setFeatures(
+            QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetClosable
+        )
+        self._signal_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+
+        self._signal_table = QTableWidget()
+        self._signal_table.setColumnCount(5)
+        self._signal_table.setHorizontalHeaderLabels(["时间", "类型", "信号标题", "置信度", "操作"])
+        self._signal_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self._signal_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self._signal_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self._signal_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self._signal_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self._signal_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self._signal_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self._signal_table.setAlternatingRowColors(True)
+        self._signal_table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {COLORS['panel_bg']};
+                color: {COLORS['text']};
+                font-size: 12px;
+                border: none;
+            }}
+            QHeaderView::section {{
+                background-color: {COLORS['toolbar_bg']};
+                color: {COLORS['text']};
+                font-weight: bold;
+                padding: 4px;
+                border: 1px solid {COLORS['border']};
+            }}
+        """)
+        self._signal_table.cellDoubleClicked.connect(self._on_signal_double_clicked)
+        self._signal_dock.setWidget(self._signal_table)
+        self.addDockWidget(Qt.RightDockWidgetArea, self._signal_dock)
+        # 默认将信号面板和异动记录面板上下排列
+        self.splitDockWidget(self._spike_dock, self._signal_dock, Qt.Vertical)
+
+        # 未读信号计数
+        self._unread_signal_count = 0
 
         # ===== 板块个股明细面板（DockWidget） =====
         self._sector_detail_panel = SectorDetailPanel()
@@ -586,6 +635,9 @@ class MainWindow(QMainWindow):
                 
                 # 更新异动记录表格
                 self._update_spike_table()
+                
+                # 更新智能信号面板
+                self._update_signal_panel()
                 
                 # 如果板块个股明细面板可见，自动刷新
                 if self._sector_detail_dock.isVisible() and getattr(self, '_current_sector_code', None):
@@ -844,6 +896,242 @@ class MainWindow(QMainWindow):
         self._current_sector_code = None
         self._current_sector_name = None
 
+    # -------------------------------------------------------------------------
+    # 智能信号处理
+    # -------------------------------------------------------------------------
+
+    def _on_new_signals(self, signals):
+        """接收新的智能信号"""
+        try:
+            self._unread_signal_count += len(signals)
+            # 状态栏闪烁提示最新信号
+            if signals:
+                latest = signals[-1]
+                title = latest.get("title", "")
+                sig_type = latest.get("signal_type", "")
+                color = SIGNAL_COLORS.get(sig_type, "#999999")
+                self._status_label.setText(
+                    f"<span style='color:{color}; font-weight:bold;'>[{SIGNAL_NAMES.get(sig_type, sig_type)}]</span> {title}"
+                )
+                # 3秒后恢复
+                QTimer.singleShot(3000, lambda: self._status_label.setText("就绪"))
+        except Exception as e:
+            print(f"[MainWindow] 处理新信号失败: {e}")
+
+    def _update_signal_panel(self):
+        """更新智能信号面板"""
+        try:
+            records = self._chart.get_signal_records(limit=200)
+            self._signal_table.setRowCount(len(records))
+            for i, rec in enumerate(records):
+                sig_type = rec.get("signal_type", "")
+                color = SIGNAL_COLORS.get(sig_type, "#999999")
+                name = SIGNAL_NAMES.get(sig_type, sig_type)
+                confidence = rec.get("confidence", 0)
+
+                # 时间
+                time_item = QTableWidgetItem(str(rec.get("timestamp", "")))
+                self._signal_table.setItem(i, 0, time_item)
+
+                # 类型
+                type_item = QTableWidgetItem(name)
+                type_item.setForeground(QColor(color))
+                type_item.setFont(QFont("Microsoft YaHei", 10, QFont.Bold))
+                self._signal_table.setItem(i, 1, type_item)
+
+                # 标题
+                title_item = QTableWidgetItem(str(rec.get("title", "")))
+                self._signal_table.setItem(i, 2, title_item)
+
+                # 置信度
+                conf_item = QTableWidgetItem(f"{confidence}%")
+                if confidence >= 80:
+                    conf_item.setForeground(QColor("#4CAF50"))
+                elif confidence >= 60:
+                    conf_item.setForeground(QColor("#FF9800"))
+                else:
+                    conf_item.setForeground(QColor("#F44336"))
+                self._signal_table.setItem(i, 3, conf_item)
+
+                # 操作按钮文字
+                op_item = QTableWidgetItem("双击查看")
+                op_item.setForeground(QColor("#2196F3"))
+                self._signal_table.setItem(i, 4, op_item)
+
+            # 滚动到最新记录
+            if records:
+                self._signal_table.scrollToBottom()
+
+            # 更新dock标题显示未读数
+            if getattr(self, '_unread_signal_count', 0) > 0:
+                self._signal_dock.setWindowTitle(f"智能信号 ({self._unread_signal_count})")
+            else:
+                self._signal_dock.setWindowTitle("智能信号")
+
+        except Exception as e:
+            print(f"[MainWindow] 更新信号面板失败: {e}")
+
+    def _on_signal_double_clicked(self, row, col):
+        """双击信号行显示详情"""
+        try:
+            records = self._chart.get_signal_records(limit=200)
+            if row < 0 or row >= len(records):
+                return
+            signal = records[row]
+            self._show_signal_detail(signal)
+            # 标记为已读
+            if getattr(self, '_unread_signal_count', 0) > 0:
+                self._unread_signal_count = max(0, self._unread_signal_count - 1)
+                self._signal_dock.setWindowTitle("智能信号")
+        except Exception as e:
+            print(f"[MainWindow] 查看信号详情失败: {e}")
+
+    def _show_signal_detail(self, signal):
+        """显示信号详情弹窗"""
+        try:
+            from PyQt5.QtWidgets import QTextEdit
+
+            sig_type = signal.get("signal_type", "")
+            color = SIGNAL_COLORS.get(sig_type, "#999999")
+            name = SIGNAL_NAMES.get(sig_type, sig_type)
+
+            dialog = QDialog(self)
+            dialog.setWindowTitle(f"信号详情 - {name}")
+            dialog.setMinimumSize(500, 400)
+            dialog.setStyleSheet(f"""
+                QDialog {{
+                    background-color: {COLORS['background']};
+                }}
+                QLabel {{
+                    color: {COLORS['text']};
+                    font-size: 13px;
+                }}
+            """)
+
+            layout = QVBoxLayout(dialog)
+
+            # 标题
+            title_label = QLabel(f"<h2 style='color:{color};'>{signal.get('title', '')}</h2>")
+            layout.addWidget(title_label)
+
+            # 基本信息
+            info_text = (f"<b>时间：</b>{signal.get('timestamp', '')}<br>"
+                        f"<b>类型：</b>{name}<br>"
+                        f"<b>置信度：</b>{signal.get('confidence', 0)}%<br>")
+            info_label = QLabel(info_text)
+            layout.addWidget(info_label)
+
+            # 描述
+            desc_label = QLabel(f"<b>描述：</b>{signal.get('description', '')}")
+            desc_label.setWordWrap(True)
+            layout.addWidget(desc_label)
+
+            # 详细信息
+            details = signal.get("details", {})
+            if details:
+                detail_text = QTextEdit()
+                detail_text.setReadOnly(True)
+                detail_text.setStyleSheet(f"""
+                    QTextEdit {{
+                        background-color: {COLORS['panel_bg']};
+                        color: {COLORS['text']};
+                        border: 1px solid {COLORS['border']};
+                        border-radius: 4px;
+                        padding: 8px;
+                        font-family: "Consolas", "Microsoft YaHei";
+                        font-size: 12px;
+                    }}
+                """)
+                import json
+                detail_str = json.dumps(details, ensure_ascii=False, indent=2)
+                detail_text.setText(detail_str)
+                layout.addWidget(QLabel("<b>详细数据：</b>"))
+                layout.addWidget(detail_text)
+
+            # 按钮
+            btn_layout = QHBoxLayout()
+            btn_layout.addStretch()
+            ok_btn = QDialogButtonBox(QDialogButtonBox.Ok)
+            ok_btn.accepted.connect(dialog.accept)
+            btn_layout.addWidget(ok_btn)
+            layout.addLayout(btn_layout)
+
+            dialog.exec_()
+        except Exception as e:
+            print(f"[MainWindow] 显示信号详情失败: {e}")
+
+    # -------------------------------------------------------------------------
+    # 信号历史持久化
+    # -------------------------------------------------------------------------
+
+    def _save_signal_history(self):
+        """保存信号历史到文件"""
+        try:
+            import json
+            import os
+
+            records = self._chart.get_signal_records(limit=500) if hasattr(self, '_chart') else []
+            if not records:
+                return
+
+            filepath = os.path.join(os.path.dirname(__file__), "signal_history.json")
+            # 读取已有历史
+            existing = []
+            if os.path.exists(filepath):
+                try:
+                    with open(filepath, "r", encoding="utf-8") as f:
+                        existing = json.load(f)
+                except Exception:
+                    existing = []
+
+            # 合并去重（基于timestamp + signal_type + title）
+            existing_keys = set()
+            for r in existing:
+                key = f"{r.get('timestamp', '')}_{r.get('signal_type', '')}_{r.get('title', '')}"
+                existing_keys.add(key)
+
+            new_records = []
+            for r in records:
+                key = f"{r.get('timestamp', '')}_{r.get('signal_type', '')}_{r.get('title', '')}"
+                if key not in existing_keys:
+                    new_records.append(r)
+                    existing_keys.add(key)
+
+            all_records = existing + new_records
+            # 保留最近1000条
+            if len(all_records) > 1000:
+                all_records = all_records[-1000:]
+
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(all_records, f, ensure_ascii=False, indent=2)
+
+            print(f"[MainWindow] 已保存 {len(new_records)} 条新信号历史")
+        except Exception as e:
+            print(f"[MainWindow] 保存信号历史失败: {e}")
+
+    def _load_signal_history(self):
+        """加载信号历史"""
+        try:
+            import json
+            import os
+
+            filepath = os.path.join(os.path.dirname(__file__), "signal_history.json")
+            if not os.path.exists(filepath):
+                return
+
+            with open(filepath, "r", encoding="utf-8") as f:
+                records = json.load(f)
+
+            if records and hasattr(self, '_chart') and self._chart is not None:
+                # 只加载当天的信号
+                from datetime import datetime
+                today = datetime.now().strftime("%Y%m%d")
+                today_records = [r for r in records if r.get("trade_date", "") == today]
+                self._chart._signal_records = today_records[-200:]
+                print(f"[MainWindow] 已加载 {len(today_records)} 条当日信号历史")
+        except Exception as e:
+            print(f"[MainWindow] 加载信号历史失败: {e}")
+
     def _toggle_filter_panel(self):
         """折叠/展开左侧筛选面板"""
         if self._filter_panel.isVisible():
@@ -893,6 +1181,9 @@ class MainWindow(QMainWindow):
         """关闭事件"""
         # 保存配置
         self._save_settings()
+        
+        # 保存信号历史
+        self._save_signal_history()
         
         # 停止定时器
         self._update_timer.stop()

@@ -1,0 +1,11 @@
+[Main] 已启用模拟数据模式 (--mock)
+[Main] 未启用代理池（如需代理请加上 --proxy 参数）
+[DataFetcher] use_proxy=False, USE_ZDAYE_PROXY=True
+[DataFetcher] Tushare API初始化成功
+[DataFetcher] 模拟模式：跳过指数请求，直接返回模拟数据
+[DataFetcher] 模拟模式：跳过东方财富请求，直接返回模拟数据
+[MainWindow] 已加载用户配置
+[MainWindow] 主窗口初始化完成
+[DataFetcher] 使用模拟资金流向数据(30个板块)
+[Chart] 新交易日: 20260527, 清空历史数据
+[PctChart] 新交易日: 20260527, 清空历史数据

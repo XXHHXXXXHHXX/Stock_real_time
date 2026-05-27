@@ -1,0 +1,16 @@
+{
+  "min_inflow": 0.0,
+  "max_outflow": 0.0,
+  "inflow_top_n": 10,
+  "outflow_top_n": 21,
+  "inflow_only": false,
+  "outflow_only": false,
+  "search": "",
+  "spike_threshold": 20,
+  "y_max": 500.0,
+  "auto_refresh": true,
+  "interval": 10,
+  "pct_top_n": 10,
+  "pct_bottom_n": 10,
+  "layout_mode": "horizontal"
+}

@@ -137,6 +137,7 @@ class TimeAxisItem(pg.AxisItem):
 class ChartSignals(QObject):
     """图表信号"""
     sector_clicked = pyqtSignal(str, str)  # ts_code, name
+    new_signals = pyqtSignal(list)  # 智能信号列表
 
 
 class MoneyFlowChart(PlotWidget):
@@ -195,6 +196,11 @@ class MoneyFlowChart(PlotWidget):
         
         # Y轴最大值限制（亿元），None表示自动适应
         self._y_max_limit = None
+        
+        # 智能信号检测
+        from signal_detector import SignalDetector
+        self._signal_detector = SignalDetector()
+        self._signal_records = []  # 信号记录列表，保留最近200条
         
         # 初始化图表样式
         self._init_style()
@@ -334,6 +340,14 @@ class MoneyFlowChart(PlotWidget):
         """获取最近的异常波动记录"""
         return self._spike_records[-limit:]
     
+    def get_signal_records(self, limit=200):
+        """获取最近的智能信号记录"""
+        return self._signal_records[-limit:]
+    
+    def clear_signal_records(self):
+        """清空信号记录"""
+        self._signal_records.clear()
+    
     def _apply_filter(self):
         """应用筛选条件，更新可见板块
         
@@ -436,6 +450,20 @@ class MoneyFlowChart(PlotWidget):
             
             # 检测异常波动（在筛选前检测所有板块）
             self._detect_spikes(time_key)
+            
+            # 智能信号检测
+            try:
+                signals = self._signal_detector.detect(
+                    sectors_df, self._history_points, time_key, trade_date
+                )
+                if signals:
+                    self._signal_records.extend(signals)
+                    self.signals.new_signals.emit(signals)
+                    # 只保留最近200条
+                    if len(self._signal_records) > 200:
+                        self._signal_records = self._signal_records[-200:]
+            except Exception as e:
+                print(f"[Chart] 信号检测失败: {e}")
             
             # 增量更新曲线：已有曲线更新数据，新增曲线绘制，移除不存在的曲线
             self._update_plots_incrementally()
