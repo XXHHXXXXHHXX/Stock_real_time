@@ -26,6 +26,7 @@ from filter_panel import FilterPanel
 from sector_detail_panel import SectorDetailPanel
 from settings_manager import load_settings, save_settings
 from signal_detector import SIGNAL_NAMES, SIGNAL_COLORS
+from signal_tracking_window import SignalTrackingWindow
 
 
 class DataUpdateSignals(QObject):
@@ -219,6 +220,9 @@ class MainWindow(QMainWindow):
         self._load_signal_history()
         self._update_signal_panel()
         
+        # 初始化信号追踪窗口（隐藏）
+        self._signal_tracking_window = SignalTrackingWindow(self)
+        
         print("[MainWindow] 主窗口初始化完成")
     
     def _init_ui(self):
@@ -264,6 +268,11 @@ class MainWindow(QMainWindow):
         self._refresh_action = QAction("⟳ 刷新", self)
         self._refresh_action.triggered.connect(self._manual_refresh)
         toolbar.addAction(self._refresh_action)
+        
+        # 信号追踪按钮
+        self._track_action = QAction("📊 信号追踪", self)
+        self._track_action.triggered.connect(self._toggle_signal_tracking)
+        toolbar.addAction(self._track_action)
         
         self.addToolBar(toolbar)
         
@@ -639,6 +648,10 @@ class MainWindow(QMainWindow):
                 # 更新智能信号面板
                 self._update_signal_panel()
                 
+                # 同步数据到信号追踪窗口
+                if hasattr(self, '_signal_tracking_window') and self._signal_tracking_window is not None:
+                    self._signal_tracking_window.update_data(sectors_df, current_time, trade_date)
+                
                 # 如果板块个股明细面板可见，自动刷新
                 if self._sector_detail_dock.isVisible() and getattr(self, '_current_sector_code', None):
                     self._refresh_sector_detail()
@@ -915,6 +928,11 @@ class MainWindow(QMainWindow):
                 )
                 # 3秒后恢复
                 QTimer.singleShot(3000, lambda: self._status_label.setText("就绪"))
+            
+            # 同步到信号追踪窗口
+            if hasattr(self, '_signal_tracking_window') and self._signal_tracking_window is not None:
+                sector_info = self._chart._sector_info if hasattr(self, '_chart') else {}
+                self._signal_tracking_window.add_signal_sectors(signals, sector_info)
         except Exception as e:
             print(f"[MainWindow] 处理新信号失败: {e}")
 
@@ -1140,6 +1158,26 @@ class MainWindow(QMainWindow):
         else:
             self._filter_panel.show()
             self._toggle_filter_action.setText("☰ 筛选")
+
+    def _toggle_signal_tracking(self):
+        """打开/关闭信号追踪窗口"""
+        if not hasattr(self, '_signal_tracking_window') or self._signal_tracking_window is None:
+            self._signal_tracking_window = SignalTrackingWindow(self)
+        
+        if self._signal_tracking_window.isVisible():
+            self._signal_tracking_window.hide()
+            self._track_action.setText("📊 信号追踪")
+        else:
+            # 如果已有数据，先同步一次
+            if self._last_data is not None:
+                sectors_df = self._last_data.get("sectors")
+                current_time = self._last_data.get("timestamp", "")
+                trade_date = self._last_data.get("trade_date", "")
+                if sectors_df is not None:
+                    self._signal_tracking_window.update_data(sectors_df, current_time, trade_date)
+            self._signal_tracking_window.show()
+            self._signal_tracking_window.raise_()
+            self._track_action.setText("📊 信号追踪 ✓")
 
     def _load_settings(self):
         """加载用户配置并应用到UI"""
