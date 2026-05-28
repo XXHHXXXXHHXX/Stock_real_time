@@ -1175,9 +1175,27 @@ class MainWindow(QMainWindow):
                 trade_date = self._last_data.get("trade_date", "")
                 if sectors_df is not None:
                     self._signal_tracking_window.update_data(sectors_df, current_time, trade_date)
+            # 设置窗口位置在主窗口右侧，避免遮挡
+            self._position_tracking_window()
             self._signal_tracking_window.show()
             self._signal_tracking_window.raise_()
             self._track_action.setText("📊 信号追踪 ✓")
+
+    def _position_tracking_window(self):
+        """将追踪窗口定位到主窗口右侧，避免遮挡"""
+        track_win = self._signal_tracking_window
+        main_geo = self.geometry()
+        # 主窗口右侧偏移 20px
+        x = main_geo.x() + main_geo.width() + 20
+        y = main_geo.y()
+        # 如果右侧超出屏幕，则放在左侧
+        screen = QApplication.primaryScreen().availableGeometry()
+        if x + track_win.width() > screen.width():
+            x = main_geo.x() - track_win.width() - 20
+            if x < 0:
+                x = main_geo.x() + 40
+                y = main_geo.y() + 40
+        track_win.move(x, y)
 
     def _load_settings(self):
         """加载用户配置并应用到UI"""

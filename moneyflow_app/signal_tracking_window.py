@@ -28,9 +28,10 @@ class SignalTrackingWindow(QWidget):
     
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setWindowFlags(Qt.Window | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint)
         self.setWindowTitle("信号板块追踪")
-        self.setMinimumSize(900, 700)
-        self.resize(1100, 750)
+        self.setMinimumSize(700, 500)
+        self.resize(850, 600)
         
         # 追踪的板块代码集合
         self._tracked_sectors = set()
