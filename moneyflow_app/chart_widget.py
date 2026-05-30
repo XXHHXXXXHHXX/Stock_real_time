@@ -18,7 +18,7 @@ from PyQt5.QtGui import QColor, QFont
 from datetime import datetime
 import traceback
 
-from config import COLORS
+from config import COLORS, get_theme
 
 
 class PrepSignals(QObject):
@@ -288,6 +288,21 @@ class MoneyFlowChart(PlotWidget):
                          xMin=None, xMax=None)
             self._auto_range()
         # Y轴范围变化后重新计算标签位置
+        self._draw_labels()
+    
+    def apply_theme(self):
+        """应用当前主题"""
+        from config import COLORS
+        self.setBackground(QColor(COLORS["background"]))
+        self.getAxis("bottom").setPen(pg.mkPen(color=COLORS["neutral"]))
+        self.getAxis("left").setPen(pg.mkPen(color=COLORS["neutral"]))
+        self.getAxis("bottom").setTextPen(pg.mkPen(color=COLORS["text"]))
+        self.getAxis("left").setTextPen(pg.mkPen(color=COLORS["text"]))
+        self.setLabel("left", "净流入 (亿元)", color=COLORS["text"], size="10px")
+        self.setLabel("bottom", "时间", color=COLORS["text"], size="10px")
+        self._zero_line.setPen(pg.mkPen(color=COLORS["neutral"], width=1, style=Qt.DashLine))
+        self._tooltip.setColor(QColor(COLORS["text"]))
+        self.showGrid(x=True, y=True, alpha=0.3)
         self._draw_labels()
     
     def set_filter(self, min_inflow=None, max_outflow=None, inflow_top_n=30, outflow_top_n=30, spike_threshold=20):
@@ -1413,6 +1428,11 @@ class PctChangeChart(MoneyFlowChart):
             self._auto_range()
         # Y轴范围变化后重新计算标签位置
         self._draw_labels()
+    
+    def apply_theme(self):
+        """应用当前主题"""
+        super().apply_theme()
+        self.setLabel("left", "涨跌幅 (%)", color=COLORS["text"], size="10px")
 
 
 class IndexBarWidget(pg.GraphicsLayoutWidget):
@@ -1508,92 +1528,210 @@ class IndexBarWidget(pg.GraphicsLayoutWidget):
 from PyQt5.QtWidgets import QLabel, QHBoxLayout, QWidget
 
 class IndexBar(QWidget):
-    """指数栏 - 显示三大指数实时数据"""
-    
+    """指数栏 - 显示三大指数实时数据（点位 + 涨跌额 + 涨跌幅）"""
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(50)
-        self.setStyleSheet(f"background-color: {COLORS['background']};")
-        
+        self.setFixedHeight(56)
+        self.setStyleSheet(f"""
+            background-color: {COLORS['background']};
+            border-bottom: 1px solid {COLORS['border']};
+        """)
+
         self._layout = QHBoxLayout(self)
-        self._layout.setSpacing(30)
-        self._layout.setContentsMargins(20, 5, 20, 5)
-        
-        self._index_labels = {}
+        self._layout.setSpacing(0)
+        self._layout.setContentsMargins(16, 4, 16, 4)
+
+        self._index_widgets = {}
         index_names = {
             "上证": "上证指数",
             "深证": "深证成指",
             "创业板": "创业板指"
         }
-        
+
         for key, display_name in index_names.items():
-            label = QLabel(f"{display_name}  --")
-            label.setStyleSheet(f"""
-                QLabel {{
-                    color: {COLORS['text']};
-                    font-size: 15px;
-                    font-weight: bold;
-                    font-family: "Microsoft YaHei", "SimHei", sans-serif;
+            card = QWidget()
+            card.setStyleSheet(f"""
+                QWidget {{
+                    background-color: {COLORS['panel_bg']};
+                    border: 1px solid {COLORS['border']};
+                    border-radius: 6px;
                 }}
             """)
-            self._index_labels[key] = label
-            self._layout.addWidget(label)
-        
+            card_layout = QHBoxLayout(card)
+            card_layout.setContentsMargins(12, 4, 12, 4)
+            card_layout.setSpacing(8)
+
+            name_label = QLabel(display_name)
+            name_label.setStyleSheet(f"""
+                QLabel {{
+                    color: {COLORS['neutral']};
+                    font-size: 12px;
+                    font-weight: bold;
+                    font-family: "Microsoft YaHei", "SimHei", sans-serif;
+                    border: none;
+                    background: transparent;
+                }}
+            """)
+            card_layout.addWidget(name_label)
+
+            price_label = QLabel("--")
+            price_label.setStyleSheet(f"""
+                QLabel {{
+                    color: {COLORS['text']};
+                    font-size: 16px;
+                    font-weight: bold;
+                    font-family: "Consolas", "Microsoft YaHei", monospace;
+                    border: none;
+                    background: transparent;
+                }}
+            """)
+            card_layout.addWidget(price_label)
+
+            change_label = QLabel("")
+            change_label.setStyleSheet(f"""
+                QLabel {{
+                    font-size: 12px;
+                    font-weight: bold;
+                    font-family: "Consolas", "Microsoft YaHei", monospace;
+                    border: none;
+                    background: transparent;
+                }}
+            """)
+            card_layout.addWidget(change_label)
+
+            self._index_widgets[key] = {
+                "card": card,
+                "name": name_label,
+                "price": price_label,
+                "change": change_label,
+            }
+            self._layout.addWidget(card, stretch=1)
+
         self._layout.addStretch()
-        
+
         self._time_label = QLabel("")
         self._time_label.setStyleSheet(f"""
             QLabel {{
                 color: {COLORS['neutral']};
-                font-size: 13px;
-                font-family: "Microsoft YaHei";
-            }}
-        """)
-        self._layout.addWidget(self._time_label)
-        
-        self._refresh_label = QLabel("⟳ 实时")
-        self._refresh_label.setStyleSheet(f"""
-            QLabel {{
-                color: {COLORS['positive']};
                 font-size: 12px;
                 font-family: "Microsoft YaHei";
             }}
         """)
+        self._layout.addWidget(self._time_label)
+
+        self._refresh_label = QLabel("⟳ 实时")
+        self._refresh_label.setStyleSheet(f"""
+            QLabel {{
+                color: {COLORS['positive']};
+                font-size: 11px;
+                font-family: "Microsoft YaHei";
+            }}
+        """)
         self._layout.addWidget(self._refresh_label)
-    
+
     def update_index(self, index_data):
         """更新指数显示"""
         if not index_data:
             return
-        
+
         for key, data in index_data.items():
-            if key in self._index_labels:
-                label = self._index_labels[key]
-                name = data.get("name", key)
-                pct = data.get("pct_change", 0)
-                
-                if pct > 0:
-                    color = COLORS["index_up"]
-                    sign = "+"
-                elif pct < 0:
-                    color = COLORS["index_down"]
-                    sign = ""
-                else:
-                    color = COLORS["neutral"]
-                    sign = ""
-                
-                text = f"{name}  {sign}{pct:.2f}%"
-                label.setText(text)
-                label.setStyleSheet(f"""
+            if key not in self._index_widgets:
+                continue
+
+            widgets = self._index_widgets[key]
+            price_label = widgets["price"]
+            change_label = widgets["change"]
+
+            close_val = data.get("close", 0)
+            change_val = data.get("change", 0)
+            pct = data.get("pct_change", 0)
+
+            if pct > 0:
+                color = COLORS["index_up"]
+                sign = "+"
+            elif pct < 0:
+                color = COLORS["index_down"]
+                sign = ""
+            else:
+                color = COLORS["neutral"]
+                sign = ""
+
+            if close_val and close_val != 0:
+                price_label.setText(f"{close_val:.2f}")
+                price_label.setStyleSheet(f"""
                     QLabel {{
                         color: {color};
-                        font-size: 15px;
+                        font-size: 16px;
                         font-weight: bold;
-                        font-family: "Microsoft YaHei", "SimHei", sans-serif;
+                        font-family: "Consolas", "Microsoft YaHei", monospace;
+                        border: none;
+                        background: transparent;
                     }}
                 """)
-        
+                change_label.setText(f"{sign}{change_val:.2f}  {sign}{pct:.2f}%")
+                change_label.setStyleSheet(f"""
+                    QLabel {{
+                        color: {color};
+                        font-size: 12px;
+                        font-weight: bold;
+                        font-family: "Consolas", "Microsoft YaHei", monospace;
+                        border: none;
+                        background: transparent;
+                    }}
+                """)
+            else:
+                price_label.setText("--")
+                price_label.setStyleSheet(f"""
+                    QLabel {{
+                        color: {COLORS['neutral']};
+                        font-size: 16px;
+                        font-weight: bold;
+                        font-family: "Consolas", "Microsoft YaHei", monospace;
+                        border: none;
+                        background: transparent;
+                    }}
+                """)
+                change_label.setText("")
+                change_label.setStyleSheet(f"""
+                    QLabel {{
+                        color: {COLORS['neutral']};
+                        font-size: 12px;
+                        font-weight: bold;
+                        font-family: "Consolas", "Microsoft YaHei", monospace;
+                        border: none;
+                        background: transparent;
+                    }}
+                """)
+
         self._time_label.setText(datetime.now().strftime("%H:%M:%S"))
+    
+    def apply_theme(self):
+        """应用当前主题"""
+        from config import COLORS
+        self.setStyleSheet(f"""
+            background-color: {COLORS['background']};
+            border-bottom: 1px solid {COLORS['border']};
+        """)
+        for key, widgets in self._index_widgets.items():
+            widgets["card"].setStyleSheet(f"""
+                QWidget {{
+                    background-color: {COLORS['panel_bg']};
+                    border: 1px solid {COLORS['border']};
+                    border-radius: 6px;
+                }}
+            """)
+            widgets["name"].setStyleSheet(f"""
+                QLabel {{
+                    color: {COLORS['neutral']};
+                    font-size: 12px;
+                    font-weight: bold;
+                    font-family: "Microsoft YaHei", "SimHei", sans-serif;
+                    border: none;
+                    background: transparent;
+                }}
+            """)
+        self.update_index(self._index_data)
 
 
 if __name__ == "__main__":

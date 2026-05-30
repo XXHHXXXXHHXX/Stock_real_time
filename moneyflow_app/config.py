@@ -28,22 +28,22 @@ SECTOR_TYPES = {
 }
 
 # 颜色配置 - 白色清爽主题
-COLORS = {
-    "background": "#ffffff",      # 白色背景
-    "grid": "#e8e8e8",            # 浅灰网格
-    "text": "#333333",            # 深灰文字（比纯黑柔和）
-    "positive": "#e60000",        # 红色表示上涨/资金流入 (A股习惯)
-    "negative": "#009944",        # 绿色表示下跌/资金流出 (A股习惯)
-    "neutral": "#999999",         # 灰色中性
+LIGHT_COLORS = {
+    "background": "#ffffff",
+    "grid": "#e8e8e8",
+    "text": "#333333",
+    "positive": "#e60000",
+    "negative": "#009944",
+    "neutral": "#999999",
     "index_up": "#e60000",
     "index_down": "#009944",
-    "toolbar_bg": "#f5f5f5",      # 工具栏背景
-    "panel_bg": "#fafafa",        # 面板背景
-    "border": "#d0d0d0",          # 边框颜色
-    "input_bg": "#ffffff",        # 输入框背景
-    "button_bg": "#f0f0f0",       # 按钮背景
-    "button_hover": "#e0e0e0",    # 按钮悬停
-    "primary_btn": "#e60000",     # 主按钮
+    "toolbar_bg": "#f5f5f5",
+    "panel_bg": "#fafafa",
+    "border": "#d0d0d0",
+    "input_bg": "#ffffff",
+    "button_bg": "#f0f0f0",
+    "button_hover": "#e0e0e0",
+    "primary_btn": "#e60000",
     "primary_btn_hover": "#ff3333",
     "line_colors": [
         "#ff6b6b", "#ff8e53", "#ff6b9d", "#c44569",
@@ -55,6 +55,57 @@ COLORS = {
         "#22a6b3", "#0984e3", "#b2bec3", "#636e72",
     ]
 }
+
+DARK_COLORS = {
+    "background": "#1e1e2e",
+    "grid": "#313144",
+    "text": "#cdd6f4",
+    "positive": "#f38ba8",
+    "negative": "#a6e3a1",
+    "neutral": "#6c7086",
+    "index_up": "#f38ba8",
+    "index_down": "#a6e3a1",
+    "toolbar_bg": "#181825",
+    "panel_bg": "#1e1e2e",
+    "border": "#45475a",
+    "input_bg": "#313244",
+    "button_bg": "#45475a",
+    "button_hover": "#585b70",
+    "primary_btn": "#f38ba8",
+    "primary_btn_hover": "#f5c2e7",
+    "line_colors": [
+        "#ff6b6b", "#ff8e53", "#ff6b9d", "#c44569",
+        "#f8b500", "#ff6348", "#ffa502", "#ff7f50",
+        "#70a1ff", "#5352ed", "#40407a", "#2ed573",
+        "#7bed9f", "#2bcbba", "#17c0eb", "#e056fd",
+        "#686de0", "#30336b", "#95afc0", "#5f27cd",
+        "#f9ca24", "#f0932b", "#eb4d4b", "#6ab04c",
+        "#22a6b3", "#0984e3", "#b2bec3", "#636e72",
+    ]
+}
+
+_current_theme = "light"
+
+
+def set_theme(theme_name):
+    global _current_theme, COLORS
+    if theme_name not in ("light", "dark"):
+        raise ValueError(f"Unknown theme: {theme_name!r}, expected 'light' or 'dark'")
+    _current_theme = theme_name
+    COLORS = DARK_COLORS if theme_name == "dark" else LIGHT_COLORS
+
+
+def get_theme():
+    return _current_theme
+
+
+def toggle_theme():
+    new_theme = "dark" if _current_theme == "light" else "light"
+    set_theme(new_theme)
+    return new_theme
+
+
+COLORS = LIGHT_COLORS
 
 # 默认筛选设置
 DEFAULT_FILTERS = {

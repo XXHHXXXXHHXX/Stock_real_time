@@ -14,12 +14,12 @@ from PyQt5.QtWidgets import (
     QMessageBox, QApplication, QAction, QMenu, QToolBar,
     QDialog, QLineEdit, QFormLayout, QDialogButtonBox,
     QDockWidget, QTableWidget, QTableWidgetItem, QHeaderView,
-    QTextEdit
+    QTextEdit, QTabWidget
 )
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, QObject, QSize
 from PyQt5.QtGui import QIcon, QFont, QColor
 
-from config import COLORS, INDEX_CODES, UPDATE_INTERVAL_MS
+from config import COLORS, INDEX_CODES, UPDATE_INTERVAL_MS, set_theme, get_theme, toggle_theme
 from data_fetcher import DataFetcher
 from chart_widget import MoneyFlowChart, PctChangeChart, IndexBar
 from filter_panel import FilterPanel
@@ -182,10 +182,10 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("实时板块资金流向监控")
         self.setMinimumSize(800, 600)
         screen = QApplication.primaryScreen().availableGeometry()
-        init_w = screen.width() // 2
-        init_h = screen.height() // 2
+        init_w = screen.width() * 3 // 4
+        init_h = screen.height() * 3 // 4
         self.resize(init_w, init_h)
-        self.move(screen.width() // 4, screen.height() // 4)
+        self.move(screen.width() // 8, screen.height() // 8)
         
         # 数据获取器
         self._fetcher = None
@@ -198,13 +198,20 @@ class MainWindow(QMainWindow):
         # 初始化UI
         self._init_ui()
         
-        # 初始化数据
-        self._init_data()
-        
-        # 定时器
+        # 定时器（必须在 _init_data 之前创建，因为 _start_data_update 会引用）
         self._update_timer = QTimer()
         self._update_timer.timeout.connect(self._on_auto_update)
         self._update_timer.start(UPDATE_INTERVAL_MS)
+
+        # 倒计时定时器
+        self._refresh_countdown = UPDATE_INTERVAL_MS // 1000
+        self._countdown_timer = QTimer()
+        self._countdown_timer.setInterval(1000)
+        self._countdown_timer.timeout.connect(self._on_countdown_tick)
+        self._countdown_timer.start()
+        
+        # 初始化数据
+        self._init_data()
         
         # 应用样式
         self._apply_style()
@@ -273,7 +280,17 @@ class MainWindow(QMainWindow):
         self._track_action = QAction("📊 信号追踪", self)
         self._track_action.triggered.connect(self._toggle_signal_tracking)
         toolbar.addAction(self._track_action)
-        
+
+        # 异动&信号面板切换按钮
+        self._toggle_right_action = QAction("📋 异动&信号", self)
+        self._toggle_right_action.triggered.connect(self._toggle_right_panel)
+        toolbar.addAction(self._toggle_right_action)
+
+        # 主题切换按钮
+        self._theme_action = QAction("🌙 深色", self)
+        self._theme_action.triggered.connect(self._toggle_theme)
+        toolbar.addAction(self._theme_action)
+
         self.addToolBar(toolbar)
         
         # ===== 指数栏 =====
@@ -363,14 +380,12 @@ class MainWindow(QMainWindow):
         pct_layout.addWidget(self._pct_chart)
         
         self._chart_splitter.addWidget(pct_container)
-        # 默认上下均分
-        self._chart_splitter.setSizes([300, 300])
+        self._chart_splitter.setSizes([400, 250])
         
         body_splitter.addWidget(self._chart_splitter)
         body_splitter.setStretchFactor(1, 1)
-        # 左侧保证至少能放下筛选面板（260px），右侧占剩余空间
-        left_w = max(260, int(self.width() * 0.25))
-        right_w = max(300, self.width() - left_w)
+        left_w = 260
+        right_w = max(400, self.width() - left_w)
         body_splitter.setSizes([left_w, right_w])
         
         main_layout.addWidget(body_splitter, stretch=1)
@@ -417,14 +432,38 @@ class MainWindow(QMainWindow):
         self._data_time_label = QLabel("")
         self._data_time_label.setStyleSheet(f"color: {COLORS['neutral']}; font-size: 11px;")
         self._status_bar.addPermanentWidget(self._data_time_label)
+
+        # 倒计时标签
+        self._countdown_label = QLabel("")
+        self._countdown_label.setStyleSheet(f"color: {COLORS['neutral']}; font-size: 11px;")
+        self._status_bar.addPermanentWidget(self._countdown_label)
         
-        # ===== 异动记录浮动面板（DockWidget） =====
-        self._spike_dock = QDockWidget("异动记录", self)
-        self._spike_dock.setFeatures(
+        # ===== 异动记录 & 智能信号 合并面板（DockWidget + TabWidget） =====
+        self._right_dock = QDockWidget("异动 & 信号", self)
+        self._right_dock.setFeatures(
             QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetClosable
         )
-        self._spike_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
-        
+        self._right_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+
+        self._right_tab = QTabWidget()
+        self._right_tab.setStyleSheet(f"""
+            QTabWidget::pane {{
+                border: 1px solid {COLORS['border']};
+                background-color: {COLORS['panel_bg']};
+            }}
+            QTabBar::tab {{
+                background-color: {COLORS['toolbar_bg']};
+                color: {COLORS['text']};
+                padding: 6px 16px;
+                border: 1px solid {COLORS['border']};
+                border-bottom: none;
+            }}
+            QTabBar::tab:selected {{
+                background-color: {COLORS['panel_bg']};
+                font-weight: bold;
+            }}
+        """)
+
         self._spike_table = QTableWidget()
         self._spike_table.setColumnCount(5)
         self._spike_table.setHorizontalHeaderLabels(["时间", "板块", "变化%", "变化(亿)", "当前(亿)"])
@@ -447,15 +486,7 @@ class MainWindow(QMainWindow):
                 border: 1px solid {COLORS['border']};
             }}
         """)
-        self._spike_dock.setWidget(self._spike_table)
-        self.addDockWidget(Qt.RightDockWidgetArea, self._spike_dock)
-
-        # ===== 智能信号面板（DockWidget） =====
-        self._signal_dock = QDockWidget("智能信号", self)
-        self._signal_dock.setFeatures(
-            QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetClosable
-        )
-        self._signal_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self._right_tab.addTab(self._spike_table, "异动记录")
 
         self._signal_table = QTableWidget()
         self._signal_table.setColumnCount(5)
@@ -484,10 +515,11 @@ class MainWindow(QMainWindow):
             }}
         """)
         self._signal_table.cellDoubleClicked.connect(self._on_signal_double_clicked)
-        self._signal_dock.setWidget(self._signal_table)
-        self.addDockWidget(Qt.RightDockWidgetArea, self._signal_dock)
-        # 默认将信号面板和异动记录面板上下排列
-        self.splitDockWidget(self._spike_dock, self._signal_dock, Qt.Vertical)
+        self._right_tab.addTab(self._signal_table, "智能信号")
+
+        self._right_dock.setWidget(self._right_tab)
+        self.addDockWidget(Qt.RightDockWidgetArea, self._right_dock)
+        self._right_dock.hide()
 
         # 未读信号计数
         self._unread_signal_count = 0
@@ -570,7 +602,8 @@ class MainWindow(QMainWindow):
         """启动数据更新线程"""
         if self._fetcher is None:
             return
-        
+
+        self._refresh_countdown = self._update_timer.interval() // 1000
         self._status_label.setText("正在更新数据...")
         self._progress_bar.setValue(0)
         self._progress_bar.show()
@@ -712,7 +745,14 @@ class MainWindow(QMainWindow):
     def _on_auto_update(self):
         """自动更新"""
         if not hasattr(self, '_auto_refresh') or self._auto_refresh:
+            self._refresh_countdown = self._update_timer.interval() // 1000
             self._start_data_update()
+
+    def _on_countdown_tick(self):
+        """倒计时每秒触发"""
+        if self._refresh_countdown > 0:
+            self._refresh_countdown -= 1
+        self._countdown_label.setText(f"下次刷新: {self._refresh_countdown}s")
     
     def _manual_refresh(self):
         """手动刷新"""
@@ -980,11 +1020,11 @@ class MainWindow(QMainWindow):
             if records:
                 self._signal_table.scrollToBottom()
 
-            # 更新dock标题显示未读数
+            # 更新tab标题显示未读数
             if getattr(self, '_unread_signal_count', 0) > 0:
-                self._signal_dock.setWindowTitle(f"智能信号 ({self._unread_signal_count})")
+                self._right_tab.setTabText(1, f"智能信号 ({self._unread_signal_count})")
             else:
-                self._signal_dock.setWindowTitle("智能信号")
+                self._right_tab.setTabText(1, "智能信号")
 
         except Exception as e:
             print(f"[MainWindow] 更新信号面板失败: {e}")
@@ -1000,7 +1040,7 @@ class MainWindow(QMainWindow):
             # 标记为已读
             if getattr(self, '_unread_signal_count', 0) > 0:
                 self._unread_signal_count = max(0, self._unread_signal_count - 1)
-                self._signal_dock.setWindowTitle("智能信号")
+                self._right_tab.setTabText(1, "智能信号")
         except Exception as e:
             print(f"[MainWindow] 查看信号详情失败: {e}")
 
@@ -1154,10 +1194,54 @@ class MainWindow(QMainWindow):
         """折叠/展开左侧筛选面板"""
         if self._filter_panel.isVisible():
             self._filter_panel.hide()
-            self._toggle_filter_action.setText("☰ 筛选")
+            self._toggle_filter_action.setText("☰ 筛选 ▸")
         else:
             self._filter_panel.show()
-            self._toggle_filter_action.setText("☰ 筛选")
+            self._toggle_filter_action.setText("☰ 筛选 ◂")
+
+    def _toggle_right_panel(self):
+        """切换右侧异动&信号面板"""
+        if self._right_dock.isVisible():
+            self._right_dock.hide()
+            self._toggle_right_action.setText("📋 异动&信号")
+        else:
+            self._right_dock.show()
+            self._right_dock.raise_()
+            self._toggle_right_action.setText("📋 异动&信号 ✓")
+
+    def _toggle_theme(self):
+        """切换深色/浅色主题"""
+        new_theme = toggle_theme()
+        if new_theme == "dark":
+            self._theme_action.setText("☀ 浅色")
+        else:
+            self._theme_action.setText("🌙 深色")
+        self._apply_style()
+        self._filter_panel.apply_theme()
+        self._chart.apply_theme()
+        self._pct_chart.apply_theme()
+        self._index_bar.apply_theme()
+        self._sector_detail_panel.apply_theme()
+        # 更新右侧面板中的表格样式
+        self._spike_table.setStyleSheet(self._spike_table.styleSheet())
+        self._signal_table.setStyleSheet(self._signal_table.styleSheet())
+        self._right_tab.setStyleSheet(f"""
+            QTabWidget::pane {{
+                border: 1px solid {COLORS['border']};
+                background-color: {COLORS['panel_bg']};
+            }}
+            QTabBar::tab {{
+                background-color: {COLORS['toolbar_bg']};
+                color: {COLORS['text']};
+                padding: 6px 16px;
+                border: 1px solid {COLORS['border']};
+                border-bottom: none;
+            }}
+            QTabBar::tab:selected {{
+                background-color: {COLORS['panel_bg']};
+                font-weight: bold;
+            }}
+        """)
 
     def _toggle_signal_tracking(self):
         """打开/关闭信号追踪窗口"""
@@ -1225,11 +1309,22 @@ class MainWindow(QMainWindow):
         # 应用自动刷新
         self._on_auto_refresh_toggled(self._filter_panel._auto_refresh_check.isChecked())
         
+        # 应用主题
+        theme = settings.get("theme", "light")
+        if theme != get_theme():
+            set_theme(theme)
+            if theme == "dark":
+                self._theme_action.setText("☀ 浅色")
+            else:
+                self._theme_action.setText("🌙 深色")
+            self._apply_style()
+        
         print("[MainWindow] 已加载用户配置")
 
     def _save_settings(self):
         """保存当前UI状态到配置文件"""
         settings = self._filter_panel.get_state()
+        settings["theme"] = get_theme()
         save_settings(settings)
         print("[MainWindow] 配置已保存")
 
@@ -1243,6 +1338,7 @@ class MainWindow(QMainWindow):
         
         # 停止定时器
         self._update_timer.stop()
+        self._countdown_timer.stop()
         
         # 停止工作线程
         if hasattr(self, '_worker') and self._worker.isRunning():

@@ -342,6 +342,91 @@ class FilterPanel(QFrame):
         self._status_label.setStyleSheet(f"color: {COLORS['neutral']}; font-size: 11px;")
         layout.addWidget(self._status_label)
     
+    def apply_theme(self):
+        """应用当前主题"""
+        from config import COLORS
+        self.setStyleSheet(f"""
+            QFrame {{
+                background-color: {COLORS['panel_bg']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
+            }}
+            QGroupBox {{
+                color: {COLORS['text']};
+                font-weight: bold;
+                font-size: 12px;
+                border: 1px solid {COLORS['border']};
+                border-radius: 4px;
+                margin-top: 6px;
+                padding-top: 6px;
+                padding-bottom: 4px;
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 8px;
+                padding: 0 4px;
+            }}
+            QLabel {{
+                color: {COLORS['text']};
+                font-size: 11px;
+            }}
+            QDoubleSpinBox, QSpinBox, QComboBox, QLineEdit {{
+                background-color: {COLORS['input_bg']};
+                color: {COLORS['text']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 3px;
+                padding: 2px 4px;
+                min-height: 18px;
+                font-size: 11px;
+            }}
+            QPushButton {{
+                background-color: {COLORS['button_bg']};
+                color: {COLORS['text']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-weight: bold;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['button_hover']};
+                border-color: #bbbbbb;
+            }}
+            QPushButton:pressed {{
+                background-color: #d0d0d0;
+            }}
+            QPushButton#primary {{
+                background-color: {COLORS['primary_btn']};
+                color: #ffffff;
+                border-color: {COLORS['primary_btn']};
+            }}
+            QPushButton#primary:hover {{
+                background-color: {COLORS['primary_btn_hover']};
+            }}
+            QCheckBox {{
+                color: {COLORS['text']};
+                font-size: 11px;
+            }}
+            QCheckBox::indicator {{
+                width: 14px;
+                height: 14px;
+            }}
+            QSlider::groove:horizontal {{
+                border: 1px solid {COLORS['border']};
+                height: 5px;
+                background: {COLORS['panel_bg']};
+                border-radius: 2px;
+            }}
+            QSlider::handle:horizontal {{
+                background: {COLORS['positive']};
+                border: 1px solid #cc0000;
+                width: 12px;
+                margin: -3px 0;
+                border-radius: 6px;
+            }}
+        """)
+        self._status_label.setStyleSheet(f"color: {COLORS['neutral']}; font-size: 11px;")
+
     def _on_filter_changed(self):
         """筛选条件变化时发出信号"""
         filters = self.get_filters()

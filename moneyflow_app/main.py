@@ -23,6 +23,16 @@
 import sys
 import os
 
+# 修复 Qt 平台插件找不到的问题
+if "QT_QPA_PLATFORM_PLUGIN_PATH" not in os.environ:
+    try:
+        import PyQt5
+        _plugins_dir = os.path.join(os.path.dirname(PyQt5.__file__), "Qt5", "plugins", "platforms")
+        if os.path.isdir(_plugins_dir):
+            os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = _plugins_dir
+    except ImportError:
+        pass
+
 # 设置高DPI支持
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication

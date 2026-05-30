@@ -1,0 +1,50 @@
+[
+  {
+    "timestamp": "10:00:20",
+    "trade_date": "20260530",
+    "signal_type": "dumping",
+    "title": "超大资金砸盘：小米概念",
+    "description": "检测到1个板块出现异常资金流出，板块价格上涨但资金逆势流出，疑似超大资金砸盘。主要板块：小米概念，合计流出28.3亿。",
+    "confidence": 80,
+    "related_sectors": [
+      "BK0572"
+    ],
+    "details": {
+      "sector_count": 1,
+      "top_sectors": [
+        {
+          "name": "小米概念",
+          "net": -28.29,
+          "pct": 1.18,
+          "z_score": -2.06,
+          "confidence": 80
+        }
+      ],
+      "total_net": -28.29
+    }
+  },
+  {
+    "timestamp": "10:01:30",
+    "trade_date": "20260530",
+    "signal_type": "bottom_fishing",
+    "title": "超大资金抄底：机器人",
+    "description": "检测到1个板块出现异常资金流入，板块价格下跌但资金逆势流入，疑似超大资金抄底。主要板块：机器人，合计流入0.4亿。",
+    "confidence": 82,
+    "related_sectors": [
+      "BK0586"
+    ],
+    "details": {
+      "sector_count": 1,
+      "top_sectors": [
+        {
+          "name": "机器人",
+          "net": 0.41,
+          "pct": -6.41,
+          "z_score": 2.23,
+          "confidence": 82
+        }
+      ],
+      "total_net": 0.41
+    }
+  }
+]
