@@ -12,5 +12,6 @@
   "interval": 10,
   "pct_top_n": 10,
   "pct_bottom_n": 10,
-  "layout_mode": "horizontal"
+  "layout_mode": "horizontal",
+  "theme": "light"
 }

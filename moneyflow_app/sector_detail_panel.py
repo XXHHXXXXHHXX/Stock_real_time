@@ -156,6 +156,52 @@ class SectorDetailPanel(QWidget):
         scroll.setWidget(scroll_content)
         layout.addWidget(scroll)
 
+    def apply_theme(self):
+        """应用当前主题"""
+        from config import COLORS
+        self._title_label.setStyleSheet(f"""
+            color: {COLORS['text']};
+            font-size: 14px;
+            font-weight: bold;
+            font-family: "Microsoft YaHei";
+        """)
+        self._summary_label.setStyleSheet(f"""
+            color: {COLORS['neutral']};
+            font-size: 11px;
+            font-family: "Microsoft YaHei";
+        """)
+        for table in self._group_tables:
+            table.setStyleSheet(f"""
+                QTableWidget {{
+                    background-color: {COLORS['panel_bg']};
+                    color: {COLORS['text']};
+                    font-size: 10px;
+                    border: none;
+                    gridline-color: {COLORS['border']};
+                }}
+                QTableWidget::item {{
+                    padding: 1px 3px;
+                }}
+                QHeaderView::section {{
+                    background-color: {COLORS['toolbar_bg']};
+                    color: {COLORS['text']};
+                    font-weight: bold;
+                    font-size: 10px;
+                    padding: 2px;
+                    border: 1px solid {COLORS['border']};
+                }}
+            """)
+        for label in self._group_labels:
+            label.setStyleSheet(f"""
+                color: {COLORS['text']};
+                font-size: 12px;
+                font-weight: bold;
+                font-family: "Microsoft YaHei";
+                padding: 3px 6px;
+                background-color: {COLORS['toolbar_bg']};
+                border-radius: 3px;
+            """)
+
     def set_data(self, concept_code, concept_name, df):
         self._concept_code = concept_code
         self._concept_name = concept_name
