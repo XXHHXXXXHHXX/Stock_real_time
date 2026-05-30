@@ -641,7 +641,7 @@ class DataFetcher:
             return cached
 
         url = (
-            "https://push2delay.eastmoney.com/api/qt/clist/get?"
+            "http://push2delay.eastmoney.com/api/qt/clist/get?"
             "cb=jQuery112309520971118134538_1656316025491&"
             "fid=f62&po=1&pz=500&pn=1&np=1&fltt=2&invt=2&"
             "ut=b2884a393a59ad64002292a3e90d46a5&"
